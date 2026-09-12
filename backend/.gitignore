@@ -1,0 +1,48 @@
+# ── Python (FastAPI backend) ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.db
+*.sqlite3
+instance/
+alembic/versions/__pycache__/
+celerybeat-schedule
+.coverage
+htmlcov/
+
+# ── Node / React (frontend) ──
+node_modules/
+dist/
+build/
+.next/
+.vite/
+*.local
+.env.local
+.env.*.local
+coverage/
+
+# ── Editors / OS ──
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ── Logs ──
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Files ──
+INTERVIEW_DESIGN.md
+PLAN.md
