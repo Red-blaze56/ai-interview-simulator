@@ -94,7 +94,7 @@ class Interview(Base):
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
-    messages: Mapped[list["Messages"]] = relationship(back_populates="interview", cascade="all, delete-orphan")
+    messages: Mapped[list["Messages"]] = relationship(back_populates="interview", order_by="Messages.created_at", cascade="all, delete-orphan")
 
 class Messages(Base):
     __tablename__ = "messages"

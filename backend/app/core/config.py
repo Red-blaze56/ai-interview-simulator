@@ -9,4 +9,8 @@ class Settings(BaseSettings):
     access_token_ttl_minutes: int = 15
     refresh_token_ttl_days: int = 30
 
+    llm_api_key: str
+    llm_model: str = "gemini-2.5-flash"
+    llm_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
 settings = Settings() # type: ignore[call-arg]

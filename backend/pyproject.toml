@@ -9,8 +9,18 @@ dependencies = [
     "asyncpg>=0.31.0",
     "fastapi[standard]>=0.141.1",
     "itsdangerous>=2.2.0",
+    "openai>=3.15.0",
     "pwdlib[argon2]>=0.3.1",
     "pydantic-settings>=2.15.0",
     "pyjwt>=2.13.0",
     "sqlalchemy>=2.0.52",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = "."
+testpaths = ["tests"]
