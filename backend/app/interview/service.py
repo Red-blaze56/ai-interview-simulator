@@ -11,6 +11,7 @@ from app.database.models import Interview, Messages, SenderEnum, StageEnum, Stat
 from app.interview.schemas import InterviewCreate
 from app.interview.llm import LLMUnavailable, ask_next, final_report
 from app.interview.probe import apply_probe
+from app.interview.bank import bank_context, target_difficulty
 
 OPENING_QUESTION = "Hi! To get started, tell me about a backend project you're proud of and what your role was."
 
@@ -66,8 +67,15 @@ def _system_args(interview: Interview) -> dict:
         "mode": interview.correction_mode.value, 
     }
 
-def _build_probe(interview: Interview) -> dict:
+async def _build_probe(db: AsyncSession, interview: Interview) -> dict:
     covered = list(interview.covered_topics or [])
+    difficulty = target_difficulty(interview.candidate_level, interview.probe_depth)
+    bank = await bank_context(
+        db,
+        language=interview.programming_language,
+        topic=interview.current_topic,
+        difficulty=difficulty
+    )
     return {
         "topic": interview.current_topic,
         "depth": interview.probe_depth,
@@ -76,7 +84,7 @@ def _build_probe(interview: Interview) -> dict:
         "planned": [t for t in (interview.focus_topics or []) if t not in covered],
         "resume_text": interview.resume_text,
         "jd_text": interview.jd_text,
-        "bank": [],   # no references seeded yet
+        "bank": bank,
     }
 
 async def submit_answer(db:AsyncSession, *, interview: Interview, content: str) -> tuple[Interview, dict, bool]:
@@ -88,7 +96,7 @@ async def submit_answer(db:AsyncSession, *, interview: Interview, content: str) 
         result = await ask_next(
             system_args=_system_args(interview),
             transcript=pending,
-            probe=_build_probe(interview),
+            probe= await _build_probe(db, interview),
             stage=interview.stage.value,
         )
     except LLMUnavailable as exc:

@@ -12,6 +12,7 @@ from openai import (
 
 from app.core.config import settings
 from app.database.models import StageEnum
+from app.interview.bank import KNOWN_TOPICS
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,8 @@ def _briefing(probe: dict) -> str:
         lines.append(f"\nCandidate resume:\n{probe['resume_text'][:2000]}")
     if probe.get("jd_text"):
         lines.append(f"\nTarget JD:\n{probe['jd_text'][:1000]}")
+
+    lines.append(f"\nAllowed topics (label your next question with exactly one): {', '.join(KNOWN_TOPICS)}")
     bank = probe.get("bank") or []
     if bank:
         lines.append("\nReference material (grade against it, build on it, do NOT read it out):")
@@ -130,7 +133,7 @@ _TURN_SCHEMA = {
         "type": "object",
         "properties": {
             "stage": {"type": "string", "enum": STAGE_VALUES},
-            "topic": {"type": "string"},
+            "topic": {"type": "string", "enum": KNOWN_TOPICS},
             "next_question": {"type": "string"},
             "evaluation": {
                 "type": "object",
