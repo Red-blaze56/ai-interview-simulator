@@ -128,3 +128,28 @@ async def submit_answer(db:AsyncSession, *, interview: Interview, content: str) 
     full = await _get_full(db, interview.id)
     assert full is not None
     return full, evaluation, should_finish
+
+#--------------------------------------------------------------------------------------
+
+async def list_interviews(db: AsyncSession, *, user_id: UUID, limit: int = 20, offset: int = 0) -> list[Interview]:
+    result = await db.scalars(
+        select(Interview)
+        .where(Interview.user_id == user_id)
+        .order_by(Interview.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(result.all())
+
+async def finish_interview(db: AsyncSession, *, interview:Interview) -> Interview:
+    if interview.status == StatusEnum.ACTIVE or not interview.report:
+        try:
+            interview.report = await final_report( system_args= _system_args(interview), transcript= _transcript(interview))
+        except LLMUnavailable as exception:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exception)) from exception
+        interview.status = StatusEnum.FINISHED
+        interview.next_question = ""
+        await db.commit()
+    fx = await _get_full(db, interview.id)
+    assert fx is not None
+    return fx  

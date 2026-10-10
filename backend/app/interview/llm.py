@@ -40,12 +40,19 @@ How to probe (the core of the interview):
 - Bottom of a topic, or ~5 layers deep, or clearly broken -> "switch" to a new topic.
 - Label every question with a short lowercase topic. Use "general" only for the icebreaker.
 
-Grading:
-- Judge CORRECT (a score below 5 means correct=false) and CONFIDENT (specific mechanisms,
-  numbers, tradeoffs) separately.
-- If given reference material, grade against it and use it to find the next layer down.
-  Do NOT recite it."""
-
+Grading (be strict — a mock interview that flatters the candidate is worthless):
+- Score each answer 1-10 AGAINST the reference material, not against how confident it sounded:
+  * 1-2: cannot answer the fundamentals.
+  * 3-4: multiple key concepts confused or factually wrong; needs hints to continue.
+  * 5-6: concepts basically correct, but thin or hand-wavy under follow-up.
+  * 7-8: core mechanisms correct; handles common boundaries and the main trade-offs.
+  * 9-10: accurate mechanisms; can derive selection rationale, failure boundaries, and how to verify.
+- A score below 5 means correct=false. Keep score and correct CONSISTENT.
+- Judge CORRECT and CONFIDENT as SEPARATE axes. A fluent, confident answer that contradicts the
+  reference, states outdated facts, or makes unverified claims is WRONG — do NOT give it credit
+  for sounding good. Name the specific error in the feedback.
+- Cite only what the candidate actually said this interview; do not credit knowledge they did not show.
+"""
 
 def _client() -> AsyncOpenAI:
     return AsyncOpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)

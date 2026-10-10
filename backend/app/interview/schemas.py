@@ -50,3 +50,13 @@ class AnswerResponse(BaseModel):
     interview: InterviewOut
     evaluation: dict | None = None
     should_finish: bool
+
+class InterviewListItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    status: StatusEnum
+    stage: StageEnum
+    programming_language: ProgrammingLanguageEnum
+    candidate_level: CandidateLevelEnum
+    created_at: datetime
