@@ -1,0 +1,441 @@
+# Common Evaluation Rubric and Feedback Templates
+
+## Scoring Principles
+
+- Each basic dimension uses a 1-10 score, citing only answers, code, or project evidence from this interview session.
+- Identity mapping: `daily_intern` and `summer_intern` both use "intern" weights, `campus` uses "new graduate" weights, `social_1_3` uses "experienced hire" weights. Identity affects scoring criterion depth but does not change the mapping.
+- Single-language and mixed-language use different formulas and weight tables. In mixed-language mode, primary and secondary languages are two independent dimensions — do not first combine them into a "language-specific ability" score before calculating.
+- Each scoring evidence item must have a unique `evidence_id` and one `score_dimension`. The same `evidence_id` must not be scored twice; when one answer is split into facets, each facet uses a different ID and enters only one dimension.
+- Each facet of a general system design question can only be counted in `common_backend` or `system_engineering`. Coding questions can count language correctness and engineering facets separately into the actual language and system design/engineering respectively, but must not double-score an entire answer.
+- Unassessed dimensions receive no score, are not filled with `0`, and do not enter the numerator or denominator; the report explicitly marks them as "not assessed".
+- When ending early, skipping questions, or read failures occur, renormalize using the original weights of the assessed dimensions. Renormalization only avoids penalizing for missing items — it does not represent full-interview capability.
+- AI capability and JD match are supplementary evaluations and do not enter the base composite score; do not output scores when not actually assessed.
+
+## Identity Weights
+
+### Single-Language Weights
+
+| Identity | Project Experience | General Backend | Primary Language | System Design/Engineering | Thinking & Communication | Total |
+|---|---:|---:|---:|---:|---:|---:|
+| Intern | 25% | 20% | 20% | 10% | 25% | 100% |
+| New Graduate | 25% | 20% | 25% | 15% | 15% | 100% |
+| Experienced Hire | 30% | 15% | 25% | 20% | 10% | 100% |
+
+### Mixed-Language Weights
+
+Mixed mode by default splits the language budget as primary 70% and secondary 30%. If the resume shows actual investment differs significantly, the primary/secondary split may be adjusted before the language stage begins, but the identity's total language budget must remain unchanged, the total across all dimensions must remain 100%, and the adjustment reason must be recorded; weights must not be changed after seeing interview performance. Scoring must use the `language_weight_split` frozen in the session — do not revert to defaults.
+
+| Identity | Project Experience | General Backend | Primary Language | Secondary Language | System Design/Engineering | Thinking & Communication | Total |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Intern | 25% | 20% | 14% | 6% | 10% | 25% | 100% |
+| New Graduate | 25% | 20% | 17.5% | 7.5% | 15% | 15% | 100% |
+| Experienced Hire | 30% | 15% | 17.5% | 7.5% | 20% | 10% | 100% |
+
+The primary/secondary columns in the table are the default 70/30. If the frozen value has been adjusted, first take that identity's total language budget (intern 20%, new graduate 25%, experienced 25%), then calculate:
+
+```text
+Primary language weight = Total language budget × language_weight_split.primary / 100
+Secondary language weight = Total language budget × language_weight_split.secondary / 100
+```
+
+The frozen split's primary and secondary must sum to 100; project, general backend, system design/engineering, and thinking & communication weights are unchanged, so the total weight remains 100%.
+
+## Composite Score Calculation
+
+```text
+Single-language:
+Single-language composite = Project Experience + General Backend + Primary Language + System Design/Engineering + Thinking & Communication
+
+Mixed-language:
+Mixed-language composite = Project Experience + General Backend + Primary Language + Secondary Language + System Design/Engineering + Thinking & Communication
+```
+
+Each term in the above formulas is `dimension score × identity weight`. When fully assessed:
+
+```text
+Composite = Σ(dimension score × identity weight)
+```
+
+When there are unassessed dimensions:
+
+```text
+Partial composite = Σ(assessed dimension score × original weight) ÷ Σ(assessed dimension original weight)
+```
+
+If `Σ(assessed dimension original weight) = 0`, do not compute a composite score, do not output `0`; only output "insufficient evidence to score" along with the unassessed scope.
+
+The final score is kept to 1 decimal place. The report lists each dimension's raw score, weight, evidence, and unassessed items; partial composites must be marked "covers assessed scope only".
+
+## Dimension Scoring Anchors
+
+### Project Experience
+
+| Score | Evidence Requirement |
+|---|---|
+| 9-10 | Can explain business goals, personal responsibilities, key implementation, quantified results, failure cases, and retrospective; experienced hires should also demonstrate production decisions |
+| 7-8 | Project is real and complete; can clearly explain own contribution, difficulties, and main trade-offs |
+| 5-6 | Can describe the project and responsibilities, but technical depth, scale data, or verification evidence is limited |
+| 3-4 | Heavily uses team or framework terminology; cannot explain personal implementation and results |
+| 1-2 | Cannot form a verifiable project description |
+
+### General Backend
+
+| Score | Evidence Requirement |
+|---|---|
+| 9-10 | Accurate mechanisms; can derive selection rationale, failure boundaries, capacity, and verification methods |
+| 7-8 | Core principles correct; can handle common boundaries and explain main trade-offs |
+| 5-6 | Concepts and usage basically correct; evidence is limited under deep follow-up |
+| 3-4 | Multiple key concepts confused; needs hints to continue |
+| 1-2 | Cannot answer key fundamentals |
+
+### Primary Language
+
+Evaluates the primary language's semantics, resource or memory model, concurrency, standard library, runtime, toolchain, coding, and troubleshooting. Mixed mode still requires independent evidence — the primary language score is not adjusted by secondary language performance.
+
+| Score | Evidence Requirement |
+|---|---|
+| 9-10 | Can explain completely from specification/runtime to engineering verification, and write boundary-reliable code |
+| 7-8 | Core mechanisms correct; proficient with common libraries and coding; can explain main version boundaries |
+| 5-6 | Can complete routine implementations, but underlying principles, error handling, or troubleshooting depth is limited |
+| 3-4 | Key semantics confused; code has obvious correctness or resource risks |
+| 1-2 | Cannot complete basic language tasks |
+
+### Secondary Language
+
+Scored only in mixed-language interviews when actually assessed. Focuses on whether the candidate understands its differences from the primary language in semantics, resource management, concurrency, toolchain, and applicable boundaries; do not copy the primary language score.
+
+| Score | Evidence Requirement |
+|---|---|
+| 9-10 | Can independently complete implementations and accurately compare the two languages' runtimes and engineering trade-offs |
+| 7-8 | Proficient with common syntax and standard libraries; can explain main differences and handle common boundaries |
+| 5-6 | Can complete basic implementations, but specialized principles or engineering experience is limited |
+| 3-4 | Only scattered usage experience; multiple key semantics inaccurate |
+| 1-2 | Cannot complete basic tasks with the secondary language |
+
+In single-language interviews, the secondary language is marked "not assessed" and must not show a `0` score.
+
+### System Design/Engineering
+
+| Score | Evidence Requirement |
+|---|---|
+| 9-10 | Can complete design from requirements, capacity, invariants, architecture, failure modes, observability to verification loop |
+| 7-8 | Design structure is complete; can explain core trade-offs, failure handling, and release verification |
+| 5-6 | Can provide a viable main flow, but capacity, consistency, or engineering verification is incomplete |
+| 3-4 | Only lists components; cannot explain data flow, boundaries, and failure behavior |
+| 1-2 | Cannot form an executable design or troubleshooting path |
+
+### Thinking & Communication
+
+| Score | Evidence Requirement |
+|---|---|
+| 9-10 | Clarifies assumptions first, then derives in a structured manner; accurate terminology; can proactively correct errors and explain the basis |
+| 7-8 | Logically coherent, clearly expressed; can fill in main arguments under follow-up |
+| 5-6 | Basically understandable, but has skipped steps, undeclared assumptions, or unstable terminology |
+| 3-4 | Self-contradictory; needs multiple follow-ups to identify conclusions |
+| 1-2 | Cannot form effective communication |
+
+---
+
+## Feedback Templates by Candidate Identity
+
+The three templates use the same set of basic dimensions; the differences are only in identity weights, evidence depth, and suggestion strength. Single-language does not show the secondary language row; mixed-language must show both primary and secondary language rows.
+
+### A. Intern Feedback Template
+
+```
+──────────────────────────────────────────
+     🎯 Intern Interview Evaluation Report
+──────────────────────────────────────────
+
+【Composite Score】X.X / 10 (shown only when the sum of assessed weights > 0)
+【Score Scope】Full interview / Partial evaluation, covers assessed scope only
+【Zero Evidence】If the sum of assessed weights = 0, delete the composite score line and only write "insufficient evidence to score" along with the unassessed scope
+
+【Dimension Scores】
+├─ Project Experience      X.X / 10 × W%: [evidence]
+├─ General Backend         X.X / 10 × W%: [evidence]
+├─ Primary Language [name] X.X / 10 × W%: [evidence]
+├─ Secondary Language [name] X.X / 10 × W%: [shown only in mixed-language and actually assessed]
+├─ System Design/Engineering X.X / 10 × W%: [evidence]
+└─ Thinking & Communication X.X / 10 × W%: [evidence]
+
+──────────────────────────────────────────
+
+【Highlights】✅
+  ✓ [answer or code evidence -> capability judgment]
+
+【What Went Well This Time】
+  → [1-2 points of affirmation, encouragement-focused]
+
+【Areas Needing Strengthening】
+  → [evidence -> impact -> knowledge or practice that needs to be filled in]
+
+【Next Steps Learning Roadmap】(Customized for interns)
+  1. [highest priority, verifiable foundational exercise]
+  2. [second priority, verifiable project or coding exercise]
+
+【Supplementary Evaluation】
+  AI capability: [output only when actually assessed, not counted in composite score]
+  JD match: [output only when JD is provided and evidence exists, not counted in composite score]
+
+【Interviewer Message】
+  [encouraging words, affirming courage, giving specific and actionable next steps]
+
+──────────────────────────────────────────
+```
+
+### B. New Graduate Feedback Template
+
+```
+──────────────────────────────────────────
+     🎯 New Graduate Interview Evaluation Report
+──────────────────────────────────────────
+
+【Composite Score】X.X / 10 (shown only when the sum of assessed weights > 0)
+【Score Scope】Full interview / Partial evaluation, covers assessed scope only
+【Zero Evidence】If the sum of assessed weights = 0, delete the composite score line and only write "insufficient evidence to score" along with the unassessed scope
+
+【Dimension Scores】
+├─ Project Experience      X.X / 10 × W%: [evidence]
+├─ General Backend         X.X / 10 × W%: [evidence]
+├─ Primary Language [name] X.X / 10 × W%: [evidence]
+├─ Secondary Language [name] X.X / 10 × W%: [shown only in mixed-language and actually assessed]
+├─ System Design/Engineering X.X / 10 × W%: [evidence]
+└─ Thinking & Communication X.X / 10 × W%: [evidence]
+
+──────────────────────────────────────────
+
+【Strengths】✅
+  ✓ [specific strength, quoting the candidate's own words as evidence]
+  ✓ [second strength]
+
+【Areas for Improvement】🔧
+  △ [specific improvement point with a clear direction]
+  △ [second improvement point]
+
+【Next Steps Learning Suggestions】📚
+  → [targeted learning content or direction, ideally tied to weak points in the candidate's answers]
+
+【Supplementary Evaluation】
+  AI capability: [output only when actually assessed, not counted in composite score]
+  JD match: [output only when JD is provided and evidence exists, not counted in composite score]
+
+【Interviewer Message】
+  [2-3 sentences of encouragement or constructive words, giving actionable suggestions]
+
+──────────────────────────────────────────
+```
+
+### C. Experienced Hire (1-3 Years) Feedback Template
+
+```
+──────────────────────────────────────────
+     🎯 Experienced Hire Interview Evaluation Report (1-3 Years Experience)
+──────────────────────────────────────────
+
+【Composite Score】X.X / 10 (shown only when the sum of assessed weights > 0)
+【Score Scope】Full interview / Partial evaluation, covers assessed scope only
+【Zero Evidence】If the sum of assessed weights = 0, delete the composite score line and only write "insufficient evidence to score" along with the unassessed scope
+
+【Dimension Scores】
+├─ Project Experience      X.X / 10 × W%: [evidence]
+├─ General Backend         X.X / 10 × W%: [evidence]
+├─ Primary Language [name] X.X / 10 × W%: [evidence]
+├─ Secondary Language [name] X.X / 10 × W%: [shown only in mixed-language and actually assessed]
+├─ System Design/Engineering X.X / 10 × W%: [evidence]
+└─ Thinking & Communication X.X / 10 × W%: [evidence]
+
+──────────────────────────────────────────
+
+【Strengths】✅
+  ✓ [specific evidence of production-grade project experience]
+  ✓ [specific evidence of general backend or primary/secondary language ability]
+
+【Main Gaps】⚠️
+  △ [precisely points out shortcomings, no hedging, e.g.: insufficient source-code-level understanding, project lacks production incident retrospectives]
+  △ [architecture thinking needs strengthening]
+
+【Targeted Improvement Plan】🛠️
+  → [specific, actionable improvement suggestions, e.g.:
+     1. Deeply verify one primary language runtime or resource management mechanism
+     2. Retrospect a performance issue in your project and write it up
+     3. Learn system design methodology and prepare 2-3 complete system design cases]
+
+【Supplementary Evaluation】
+  AI capability: [output only when actually assessed, not counted in composite score]
+  JD match: [output only when JD is provided and evidence exists, not counted in composite score]
+
+【Interviewer Message】
+  [directly points out the core gap, gives the direction most worth investing in at the 1-3 year stage, no platitudes]
+
+──────────────────────────────────────────
+```
+
+---
+
+## Feedback Wording Examples by Style
+
+The same interview result — six styles change only the wording, not the scoring facts. The following uses the scenario of insufficient general backend evidence and insufficient project quantification, not bound to a specific language:
+
+```text
+Project Experience 6.0, General Backend 5.0, Primary Language 6.0,
+System Design/Engineering 5.0, Thinking & Communication 6.0.
+```
+
+### Grilling Style
+
+```
+Projects and fundamentals meet the minimum bar, but evidence is insufficient. You
+did not provide capacity, latency, and failure data, and the system design did not
+explain failure boundaries. The technical gaps are:
+1. Compile a project capacity and performance baseline.
+2. Prove your troubleshooting path with a failure drill.
+3. Fill in runtime or resource management evidence for the primary language.
+```
+
+### Warm Encouraging Style
+
+```
+Your core concept directions are basically correct, and you can explain your project
+responsibilities. The next step is to supplement capacity, latency, and failure evidence,
+then pick one primary language mechanism and go deep into its runtime or resource
+boundaries. This will elevate your current "can use" evidence to "can explain and verify".
+```
+
+### Professional Efficient Style
+
+```
+【Conclusion】Fundamentals usable; project evidence and system design boundaries insufficient.
+【Evidence】Core concepts correct; no capacity, latency, failure timeline, or verification method provided.
+【Actions】1. Establish a load test baseline. 2. Retrospect one incident. 3. Deep-dive one primary language runtime mechanism.
+```
+
+### Deep Academic Style
+
+```
+Your answer describes "what it is", but argumentation of assumptions, boundaries, and
+counterexamples is insufficient. Suggest picking one core mechanism from this session
+and completing its design goals, alternatives, complexity or resource cost, and how to
+verify with experiments.
+```
+
+### Engineering Practice Style
+
+```
+The project's main flow can be explained, but production evidence is missing: baseline
+QPS, P95/P99, resource utilization, error rates, and failure timeline. Suggest first
+load-testing the core interfaces, then using monitoring, logs, and profiles to retrospect
+bottlenecks, recording data before and after changes.
+```
+
+### Balanced Comprehensive Style
+
+```
+Your fundamentals and communication meet the basic requirements of your current identity.
+Main improvement areas are project quantification, system failure boundaries, and primary
+language mechanism depth. Suggest first compiling a reproducible performance report, then
+doing source-code or runtime verification on the weakest mechanism from this session.
+```
+
+---
+
+## D. Target Role Match Analysis (Optional Appendix)
+
+When `jd_provided=true` and interview evidence exists, this analysis may be output after the standard evaluation report. When only a JD is provided and interview evidence already exists, technical match and experience match may also be output; only when `resume_provided=true` should "interview performance vs resume description" and resume optimization be output.
+
+### Separating Coverage from Performance
+
+First break the JD into independently verifiable requirements and tag each as `must-have` or `nice-to-have`. Only count requirements related to the target role and this session's allowed assessment scope that can be judged via technical answers, code, or project evidence; pure company promotion, benefits, location, etc. do not enter the denominator.
+
+```text
+JD coverage = Verified JD requirement count ÷ Total assessable JD requirement count
+```
+
+"Verified" means there is sufficient corresponding evidence to judge the requirement as "match" or "gap"; merely mentioning keywords, inferring from other dimensions, or not yet asking counts as "pending verification". Coverage answers "how much of the JD was verified this session"; verified-item performance answers "how strong the verified capability is" — the two must be reported separately.
+
+Output gates:
+
+- When JD coverage is below 80%, do not output an overall star rating or `X/5`; the overall conclusion is fixed as "insufficient evidence / pending verification".
+- When any must-have remains unverified, do not output an overall star rating or `X/5`, even if verified items perform strongly.
+- Only when JD coverage is at least 80% and all must-haves are verified may the overall star rating and `X/5` be output based on verified-item performance.
+- 5/5 additionally requires JD coverage of at least 90%, all must-haves with strong evidence, and no confirmed critical gaps. Do not normalize a few strong answers into "highly matched".
+- When gates are not passed, still list matches, gaps, and pending requirements item by item, but do not substitute the average of verified items for overall role match.
+
+Evidence judgment:
+
+- Tech stack match uses only language, `common_backend`, `system_engineering`, or other explicit technical evidence. JD requirements without corresponding technical evidence are marked `⚠️ pending verification` — do not infer a gap.
+- Project experience without relevant evidence is marked `⚠️ pending verification` or omitted. Only when the candidate explicitly denies relevant experience, or their answer confirms insufficient capability, may it be marked `❌ gap`.
+- Do not infer lack from unasked questions. Each sub-section cites only the `evidence_id` of its corresponding `score_dimension` or facet.
+- `⚠️ Pending verification` does not deduct as a gap, but does lower JD coverage; do not inflate the overall rating by ignoring pending items.
+
+```
+──────────────────────────────────────────
+     📋 Target Role Match Analysis
+──────────────────────────────────────────
+
+【Target Role】[Role name / Company name from JD]
+【JD Coverage】[Verified count] / [Total assessable] = [Percentage]
+【Must-have Status】All verified / [N] items still pending verification
+
+【Overall Match Rating】
+  [Gate passed: ★★★☆☆ (X/5) and a one-sentence summary]
+  [Gate not passed: Insufficient evidence / pending verification; no stars or X/5 shown]
+
+【Tech Stack Match】
+  ✅ Match: [list JD requirements the candidate demonstrated in the interview]
+  ⚠️ Pending verification: [JD requirements not sufficiently assessed in this session, depth cannot be judged]
+  ❌ Gap: [candidate's technical answers confirmed insufficiency, or explicitly denied having the skill]
+
+【Project Experience Match】
+  ✅ Match: [alignment between candidate's project experience and JD business scenarios]
+  ⚠️ Pending verification: [JD requires but no corresponding project evidence in this session]
+  ❌ Gap: [candidate explicitly denied the experience, or project answers confirmed insufficiency]
+
+【Interview Performance vs Resume Description】(Output only when `resume_provided=true`)
+  → [which resume highlights were verified in the interview]
+  → [parts of the resume description not supported in the interview]
+  → [abilities demonstrated in the interview not mentioned in the resume]
+
+【Preparation Suggestions for This Role】
+  1. [most critical technical gap, how to fill it]
+  2. [how to better demonstrate JD match during the interview]
+  3. [resume optimization suggestions; output only when `resume_provided=true`]
+```
+
+---
+
+### Match Rating Criteria
+
+The table below is used only when JD coverage is at least 80% and all must-haves are verified. Ratings are based on the evidence strength of verified items and confirmed gaps; unverified requirements are not renormalized.
+
+| Stars | Meaning | Description |
+|------|------|------|
+| ★★★★★ (5/5) | Highly matched | Coverage at least 90%, all must-haves with strong evidence, no confirmed critical gaps, other verified items perform excellently |
+| ★★★★☆ (4/5) | Well matched | Main requirements match, with 1-2 minor gaps that can be short-term addressed |
+| ★★★☆☆ (3/5) | Basically matched | Core skills match but with obvious gaps; needs focused preparation |
+| ★★☆☆☆ (2/5) | Insufficient match | Multiple key requirements unmet; needs longer preparation |
+| ★☆☆☆☆ (1/5) | Severely mismatched | JD requirements have a large gap from current capability; suggest adjusting the target role |
+
+#### Match Analysis Wording Examples by Style
+
+**Grilling Style:**
+
+```
+Overall match ★★☆☆☆ (2/5). Current evidence does not meet role requirements: the JD
+requires microservice experience and hands-on caching, but this session's answers did
+not provide accurate mechanism and practice evidence.
+Suggestions:
+1. Complete a runnable microservices project and document failures and verification evidence
+2. Fill in the mechanisms and boundaries of cache penetration, breakdown, and avalanche
+3. Complete one mock re-test for the same role and re-assess the gap
+```
+
+**Warm Encouraging Style:**
+
+```
+Insufficient evidence / pending verification: this session only verified primary language
+fundamentals; JD coverage is 60%, and the must-have of microservices is not yet verified,
+so no overall star rating is output. The verified primary language fundamentals align with
+the role's requirements; the next round should prioritize verifying microservice experience
+and database tuning capability before assessing overall match.
+```

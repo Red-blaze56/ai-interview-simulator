@@ -1,0 +1,859 @@
+# C++ Backend Coding Challenge Bank
+
+> This file is only for C++ coding interviews. C++20 is used by default; if the role uses another standard, the interviewer must state it first.
+> Evaluation order: correctness, resource and thread lifecycle, exception safety, boundary conditions, complexity — and only then micro-optimizations.
+> Except for questions explicitly marked as design questions, reference code should compile standalone. Lock-free implementations are not a default requirement for interns; candidates may first submit a correct locked version.
+
+---
+
+## 1. RAII File Handle
+
+### Implement a Movable File Descriptor Wrapper
+
+**Applicable identity:** Intern / New graduate / Experienced hire
+
+**Assessed points:** RAII, exclusive ownership, move semantics, destructor constraints, system call error handling.
+
+**Question:** Implement `UniqueFd`, exclusively owning a POSIX file descriptor.
+
+- Input: constructor receives `int fd`, with `-1` meaning an empty handle.
+- Output: provides `get()`, `valid()`, `release()`, and `reset()`; the object closes any fd it still holds when destroyed.
+- Constraints: copying forbidden, moving allowed; self-move must not leak; `reset` with the same old and new fd must not close first and then keep holding an invalidated value.
+- Prohibited assumptions: a non-negative fd necessarily belongs to this object; ownership ends only after `close` succeeds; destructors can throw.
+
+**Reference implementation highlights:**
+
+```cpp
+#include <unistd.h>
+#include <utility>
+
+class UniqueFd {
+public:
+    UniqueFd() noexcept = default;
+    explicit UniqueFd(int fd) noexcept : fd_(fd) {}
+    ~UniqueFd() { close_owned(); }
+
+    UniqueFd(const UniqueFd&) = delete;
+    UniqueFd& operator=(const UniqueFd&) = delete;
+
+    UniqueFd(UniqueFd&& other) noexcept
+        : fd_(std::exchange(other.fd_, -1)) {}
+
+    UniqueFd& operator=(UniqueFd&& other) noexcept {
+        if (this != &other) {
+            reset(other.release());
+        }
+        return *this;
+    }
+
+    int get() const noexcept { return fd_; }
+    bool valid() const noexcept { return fd_ >= 0; }
+
+    int release() noexcept {
+        return std::exchange(fd_, -1);
+    }
+
+    void reset(int new_fd = -1) noexcept {
+        if (new_fd == fd_) {
+            return;
+        }
+        close_owned();
+        fd_ = new_fd;
+    }
+
+private:
+    void close_owned() noexcept {
+        if (fd_ >= 0) {
+            const int old = std::exchange(fd_, -1);
+            // Even if close() fails, the destructor path must not throw or blindly retry:
+            // whether the fd is still valid after EINTR is platform-dependent.
+            (void)::close(old);
+        }
+    }
+
+    int fd_ = -1;
+};
+```
+
+- Ownership is taken out of the member before calling `close`, avoiding reentrancy or double close on error paths.
+- The destructor only does best-effort cleanup; businesses that need to observe close errors should provide an explicit `close_checked()`.
+- Tests should at least cover the default object, move construction, move assignment, `release`, `reset`, and `reset` with the same fd.
+
+**Continuous follow-up:**
+
+1. Layer 1: Why must the copy constructor be deleted, and why should the move constructor be `noexcept`?
+2. Layer 2: What are the ownership changes of `release()` and `reset()` respectively? When is the caller responsible for closing?
+3. Layer 3: Why can't `close` errors be thrown in the destructor? What happens if an exception is thrown during stack unwinding?
+4. Layer 4: If wrapping `FILE*`, a socket, or a database connection, how do the deleter, invalid value, and close-failure contract change?
+
+**Common errors:**
+
+- Using compiler-generated copy operations, causing two objects to close the same fd twice.
+- Not invalidating the source object after a move, or not closing the old fd before move assignment overwrites it.
+- `reset(fd_)` closing first then saving the same number, leaving a seemingly valid but closed handle.
+- Unconditionally retrying `close` on `EINTR`, accidentally closing an fd already reused by another thread.
+
+---
+
+## 2. Rule of Five Resource Class
+
+### Implement a Deep-Copy Byte Buffer
+
+**Applicable identity:** New graduate / Experienced hire
+
+**Assessed points:** Rule of Five, copy-and-swap, strong exception guarantee, empty object invariant, overflow checking.
+
+**Question:** Implement a `ByteBuffer` owning contiguous byte storage.
+
+- Input: constructor receives a length; `operator[]` reads and writes by index.
+- Output: after copying, two objects share nothing; after moving, the source remains destructible and reassignable.
+- Constraints: allocation failure must not destroy the assignment target's original state; when `size()==0`, `data()` may be null.
+- Prohibited assumptions: `new[]` never fails; `memcpy` works for any non-trivially-copyable type; self-assignment cannot happen.
+
+**Reference implementation highlights:**
+
+```cpp
+#include <algorithm>
+#include <cstddef>
+#include <memory>
+#include <stdexcept>
+#include <utility>
+
+class ByteBuffer {
+public:
+    ByteBuffer() noexcept = default;
+
+    explicit ByteBuffer(std::size_t size)
+        : size_(size),
+          data_(size == 0 ? nullptr : std::make_unique<std::byte[]>(size)) {}
+
+    ByteBuffer(const ByteBuffer& other) : ByteBuffer(other.size_) {
+        if (size_ != 0) {
+            std::copy_n(other.data_.get(), size_, data_.get());
+        }
+    }
+
+    ByteBuffer(ByteBuffer&& other) noexcept
+        : size_(std::exchange(other.size_, 0)),
+          data_(std::move(other.data_)) {}
+
+    ByteBuffer& operator=(ByteBuffer other) noexcept {
+        swap(other);
+        return *this;
+    }
+
+    ~ByteBuffer() = default;
+
+    void swap(ByteBuffer& other) noexcept {
+        using std::swap;
+        swap(size_, other.size_);
+        swap(data_, other.data_);
+    }
+
+    std::size_t size() const noexcept { return size_; }
+    std::byte* data() noexcept { return data_.get(); }
+    const std::byte* data() const noexcept { return data_.get(); }
+
+    std::byte& operator[](std::size_t index) {
+        if (index >= size_) throw std::out_of_range("ByteBuffer index");
+        return data_[index];
+    }
+
+private:
+    std::size_t size_ = 0;
+    std::unique_ptr<std::byte[]> data_;
+};
+```
+
+- The by-value assignment parameter unifies copy/move assignment; if parameter construction fails, the target is unchanged.
+- Member declaration order matches construction order; the empty object maintains `size_ == 0 && data_ == nullptr`.
+- If the actual class only consists of standard containers, prefer Rule of Zero; this question is for assessing manual resource semantics.
+
+**Continuous follow-up:**
+
+1. Layer 1: Why can't the copy constructor just copy the pointer?
+2. Layer 2: How does copy-and-swap provide the strong exception guarantee, and what is the cost?
+3. Layer 3: Why does the `noexcept` of move operations affect `std::vector`'s choices during reallocation?
+4. Layer 4: If element construction can throw, how should raw storage, constructed-element counts, and rollback be designed?
+
+**Common errors:**
+
+- Mismatched `delete` vs `delete[]`, or sharing raw pointers after copying.
+- Freeing the target before allocating the copy, losing target data if allocation fails.
+- Update order of `size_` and `data_` breaking the invariant after an exception.
+- Hand-writing Rule of Five for production code that could be correctly expressed by `std::vector<std::byte>`.
+
+---
+
+## 3. Simplified Exclusive Smart Pointer
+
+### Design and Implement `MiniUniquePtr`
+
+**Applicable identity:** New graduate / Experienced hire
+
+**Assessed points:** Exclusive ownership, templates, deleters, move-only types, exception specifications.
+
+**Question:** Implement `MiniUniquePtr<T, D>` supporting only single objects.
+
+- Input: can receive a `T*` and a deleter; supports a default empty object.
+- Output: provides `get`, `operator*`, `operator->`, `release`, `reset`, `swap`, and bool conversion.
+- Constraints: copying forbidden; after a move the source is empty; the deleter is called exactly once on destruction. To focus on ownership, this simplified implementation requires `D`'s default/copy/move construction, move assignment, swap, and `D(T*)` invocation to be non-throwing.
+- Prohibited assumptions: the deleter is necessarily an empty type; array and single-object deletion rules are the same; these teaching constraints equal the standard library's complete deleter contract.
+
+**Reference implementation highlights:**
+
+```cpp
+#include <cassert>
+#include <functional>
+#include <memory>
+#include <type_traits>
+#include <utility>
+
+template <class T, class D = std::default_delete<T>>
+class MiniUniquePtr {
+public:
+    static_assert(std::is_nothrow_default_constructible_v<D>,
+                  "deleter default construction must not throw");
+    static_assert(std::is_nothrow_invocable_v<D&, T*>,
+                  "deleter invocation must not throw");
+    static_assert(std::is_nothrow_move_constructible_v<D>,
+                  "deleter move construction must not throw");
+    static_assert(std::is_nothrow_copy_constructible_v<D>,
+                  "deleter copy construction must not throw");
+    static_assert(std::is_nothrow_move_assignable_v<D>,
+                  "deleter move assignment must not throw");
+    static_assert(std::is_nothrow_swappable_v<D>,
+                  "deleter swap must not throw");
+
+    MiniUniquePtr() noexcept = default;
+    explicit MiniUniquePtr(T* ptr) noexcept : ptr_(ptr) {}
+    MiniUniquePtr(T* ptr, D deleter)
+        noexcept(std::is_nothrow_move_constructible_v<D>)
+        : deleter_(std::move(deleter)), ptr_(ptr) {}
+
+    ~MiniUniquePtr() noexcept {
+        if (ptr_) deleter_(ptr_);
+    }
+
+    MiniUniquePtr(const MiniUniquePtr&) = delete;
+    MiniUniquePtr& operator=(const MiniUniquePtr&) = delete;
+
+    MiniUniquePtr(MiniUniquePtr&& other)
+        noexcept(std::is_nothrow_move_constructible_v<D>)
+        : deleter_(std::move(other.deleter_)), ptr_(other.release()) {}
+
+    MiniUniquePtr& operator=(MiniUniquePtr&& other)
+        noexcept(std::is_nothrow_move_assignable_v<D>) {
+        if (this != &other) {
+            reset();
+            deleter_ = std::move(other.deleter_);
+            ptr_ = other.release();
+        }
+        return *this;
+    }
+
+    T* get() const noexcept { return ptr_; }
+    explicit operator bool() const noexcept { return ptr_ != nullptr; }
+    T& operator*() const { assert(ptr_); return *ptr_; }
+    T* operator->() const noexcept { return ptr_; }
+
+    T* release() noexcept { return std::exchange(ptr_, nullptr); }
+
+    void reset(T* next = nullptr) noexcept {
+        if (next == ptr_) return;
+        T* old = std::exchange(ptr_, next);
+        if (old) deleter_(old);
+    }
+
+    void swap(MiniUniquePtr& other)
+        noexcept(std::is_nothrow_swappable_v<D>) {
+        using std::swap;
+        swap(deleter_, other.deleter_);
+        swap(ptr_, other.ptr_);
+    }
+
+private:
+    [[no_unique_address]] D deleter_{};
+    T* ptr_ = nullptr;
+};
+```
+
+- This is a teaching implementation and does not claim to cover `std::unique_ptr`'s converting move, array specialization, reference deleter, and precise conditional `noexcept`.
+- Class-level `static_assert` rejects potentially-throwing default deleter construction before any raw pointer is taken over; otherwise the `MiniUniquePtr(T*)` parameter evaluation already produces a raw pointer, and failed member initialization would leave it unreleased.
+- The teaching implementation explicitly requires the deleter's default/copy/move/assignment/swap/invocation all to be non-throwing. The deleter is initialized before the pointer to avoid leaking when its construction fails and releases from the source early.
+- If interview time is limited, first implement a fixed `delete` version, then follow up on the deleter.
+
+**Continuous follow-up:**
+
+1. Layer 1: Why doesn't `release` delete the object, and why does `reset` delete the old object?
+2. Layer 2: Why does the array version need a different deletion expression and subscript interface?
+3. Layer 3: What impact do stateful or throwing deleters have on object size, raw-only constructors, move assignment, and exception specifications? How to relax this question's no-throw teaching constraint?
+4. Layer 4: When simplifying a reference-counted control block, when do the strong/weak counts, object destruction, and control block destruction each occur?
+
+**Common errors:**
+
+- `release()` deleting the object and returning a dangling pointer.
+- The move constructor copying the pointer without clearing the source object.
+- `MiniUniquePtr(T*)` having received `new T`, then the default-constructed deleter throwing, leaking the not-yet-taken-over raw pointer.
+- Using `delete` to free arrays, or letting the deleter throw in the destructor path.
+- Treating this teaching implementation as a production component replacing the standard library.
+
+---
+
+## 4. Correctly Shutting Down a Thread Pool
+
+### Implement a Fixed-Thread-Count Thread Pool
+
+**Applicable identity:** New graduate / Experienced hire
+
+**Assessed points:** Thread lifecycle, condition variable predicates, task exception isolation, shutdown semantics, backpressure.
+
+**Question:** Implement a thread pool with a fixed number of workers, supporting submitting void tasks and drain shutdown.
+
+- Input: constructor receives a positive integer thread count; `submit(std::function<void()>)` submits tasks.
+- Output: workers execute tasks; the destructor or `shutdown()` stops accepting new tasks, finishes already-accepted tasks, and joins.
+- Constraints: concurrent `submit` must be safe; task exceptions must not silently disappear workers; `shutdown` must be idempotent; destroying the pool or calling `shutdown` from within one of its own workers is forbidden.
+- Prohibited assumptions: condition variables cannot have spurious wakeups; callers always manually shut down first; all tasks succeed.
+
+**Reference implementation highlights:**
+
+```cpp
+#include <condition_variable>
+#include <cstddef>
+#include <exception>
+#include <functional>
+#include <mutex>
+#include <queue>
+#include <stdexcept>
+#include <thread>
+#include <utility>
+#include <vector>
+
+class ThreadPool {
+public:
+    explicit ThreadPool(std::size_t count) {
+        if (count == 0) throw std::invalid_argument("thread count is zero");
+        try {
+            for (std::size_t i = 0; i < count; ++i) {
+                workers_.emplace_back([this] { worker_loop(); });
+            }
+        } catch (...) {
+            shutdown_noexcept();
+            throw;
+        }
+    }
+
+    ~ThreadPool() noexcept { shutdown_noexcept(); }
+    ThreadPool(const ThreadPool&) = delete;
+    ThreadPool& operator=(const ThreadPool&) = delete;
+
+    void submit(std::function<void()> task) {
+        if (!task) throw std::invalid_argument("empty task");
+        {
+            std::lock_guard lock(mu_);
+            if (stopping_) throw std::runtime_error("pool is stopping");
+            tasks_.push(std::move(task));
+        }
+        cv_.notify_one();
+    }
+
+    std::exception_ptr take_error() noexcept {
+        std::lock_guard lock(mu_);
+        return std::exchange(first_error_, nullptr);
+    }
+
+    void shutdown() {
+        std::call_once(shutdown_once_, [this] {
+            {
+                std::lock_guard lock(mu_);
+                stopping_ = true;
+            }
+            cv_.notify_all();
+            for (auto& worker : workers_) {
+                if (worker.get_id() == std::this_thread::get_id()) {
+                    // Shutdown/destruction inside a worker violates the class contract;
+                    // we cannot detach and continue accessing this.
+                    std::terminate();
+                }
+                if (worker.joinable()) worker.join();
+            }
+            workers_.clear();
+        });
+    }
+
+private:
+    void shutdown_noexcept() noexcept {
+        try {
+            shutdown();
+        } catch (...) {
+            // During destruction, std::thread::join's std::system_error must not propagate;
+            // leaving a joinable thread also terminates in its destructor.
+            std::terminate();
+        }
+    }
+
+    void worker_loop() noexcept {
+        for (;;) {
+            std::function<void()> task;
+            {
+                std::unique_lock lock(mu_);
+                cv_.wait(lock, [this] { return stopping_ || !tasks_.empty(); });
+                if (stopping_ && tasks_.empty()) return;
+                task = std::move(tasks_.front());
+                tasks_.pop();
+            }
+            try {
+                task();
+            } catch (...) {
+                std::lock_guard lock(mu_);
+                if (!first_error_) first_error_ = std::current_exception();
+            }
+        }
+    }
+
+    std::mutex mu_;
+    std::condition_variable cv_;
+    std::queue<std::function<void()>> tasks_;
+    bool stopping_ = false;
+    std::exception_ptr first_error_;
+    std::vector<std::thread> workers_;
+    std::once_flag shutdown_once_;
+};
+```
+
+- `stopping_` and the queue form a state machine under the same lock, avoiding data races between submit and shutdown.
+- Tasks execute outside the lock; otherwise one slow task blocks submission and other workers from fetching tasks.
+- The explicit `shutdown()` is not marked `noexcept`, allowing `std::thread::join`'s `std::system_error` to be reported to the caller; after success, `call_once` ensures the destructor won't join again. If it throws midway, already-joined threads are non-joinable and subsequent cleanup only handles remaining threads.
+- The destructor and constructor-failure rollback go through `shutdown_noexcept()`; any join failure causes `std::terminate` because the object cannot be safely destroyed while leaving joinable threads. Shutting down/destroying the pool from inside a worker is an explicit contract violation and likewise `terminate`s.
+- The teaching version stores the first task exception for the caller to extract; a production version should define a complete error sink, discard/aggregation policy, and add bounded queues and rejection policies.
+
+**Continuous follow-up:**
+
+1. Layer 1: What problem does `wait(lock, predicate)` solve?
+2. Layer 2: How does the drain shutdown state machine differ from immediate shutdown?
+3. Layer 3: When the explicit `shutdown`'s `join` throws `std::system_error`, why can't it be silently hidden behind `noexcept` triggering terminate?
+4. Layer 4: What contracts are needed for the Nth thread failing to construct, shutdown inside a worker, future return values, and task cancellation respectively?
+
+**Common errors:**
+
+- Using `if` to wait instead of a predicate loop, reading an empty queue after a spurious wakeup.
+- Holding the lock while executing tasks, making the thread pool effectively serial or deadlocking.
+- Destroying a `joinable` `std::thread`, triggering `std::terminate`.
+- Wrapping the throwable `join()` in an unexplained `noexcept shutdown`, with errors only surfacing as terminate.
+- Calling `shutdown` from inside a worker then trying to join itself, or detaching to avoid self-join while still accessing pool state.
+- Task exceptions escaping workers, or being swallowed with no observable error channel.
+
+---
+
+## 5. Bounded Blocking Queue
+
+### Implement a `BlockingQueue<T>` with Shutdown Support
+
+**Applicable identity:** Intern / New graduate / Experienced hire
+
+**Assessed points:** Mutex, condition variable, backpressure, close protocol, exception safety.
+
+**Question:** Implement a bounded blocking queue with multiple producers and multiple consumers.
+
+- Input: positive capacity; `push(T)`; `pop()`.
+- Output: producers wait when full, consumers wait when empty; after `close()` new elements are rejected and consumers can drain existing ones.
+- Constraints: `close()` is idempotent; all waiters eventually wake; `pop` uses `std::optional<T>` to represent "closed and drained". To ensure `pop` can safely remove after moving from the front, this simplified reference implementation explicitly requires `T` to be nothrow move constructible.
+- Prohibited assumptions: there is only one producer; notification means the condition already holds; this no-throw teaching constraint automatically applies to all production types.
+
+**Reference implementation highlights:**
+
+```cpp
+#include <condition_variable>
+#include <cstddef>
+#include <deque>
+#include <mutex>
+#include <optional>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+
+template <class T>
+class BlockingQueue {
+public:
+    static_assert(std::is_nothrow_move_constructible_v<T>,
+                  "T must be nothrow move constructible");
+
+    explicit BlockingQueue(std::size_t capacity) : capacity_(capacity) {
+        if (capacity == 0) throw std::invalid_argument("capacity is zero");
+    }
+
+    bool push(T value) {
+        std::unique_lock lock(mu_);
+        not_full_.wait(lock, [this] {
+            return closed_ || queue_.size() < capacity_;
+        });
+        if (closed_) return false;
+        queue_.push_back(std::move(value));
+        lock.unlock();
+        not_empty_.notify_one();
+        return true;
+    }
+
+    std::optional<T> pop() {
+        std::unique_lock lock(mu_);
+        not_empty_.wait(lock, [this] {
+            return closed_ || !queue_.empty();
+        });
+        if (queue_.empty()) return std::nullopt;
+        T value = std::move(queue_.front());
+        queue_.pop_front();
+        lock.unlock();
+        not_full_.notify_one();
+        return value;
+    }
+
+    void close() noexcept {
+        {
+            std::lock_guard lock(mu_);
+            closed_ = true;
+        }
+        not_empty_.notify_all();
+        not_full_.notify_all();
+    }
+
+private:
+    const std::size_t capacity_;
+    std::mutex mu_;
+    std::condition_variable not_empty_;
+    std::condition_variable not_full_;
+    std::deque<T> queue_;
+    bool closed_ = false;
+};
+```
+
+- Queue state, close state, and wait predicates are protected by the same mutex.
+- When `queue_.push_back` throws, the queue hasn't grown; the lock is released by RAII; no success notification should be sent.
+- The `static_assert` is an input constraint of this simplified implementation, not a necessary condition of a general blocking queue; it prevents `pop` from moving the front element (changing the source first) then throwing, making retry semantics hard to define.
+- If timeouts are required, use `wait_until` with an absolute deadline to avoid repeated spurious wakeups extending the total timeout.
+
+**Continuous follow-up:**
+
+1. Layer 1: Why must both producers and consumers be notified on close?
+2. Layer 2: Why must `pop` still return buffered elements after close?
+3. Layer 3: To support throwing moves, how to use copying, two-phase extraction, or retaining the original node to define basic/strong guarantees without losing the front element?
+4. Layer 4: How to add deadlines, stop tokens, fairness, or batch operations without breaking the state machine?
+
+**Common errors:**
+
+- `close` without locking, forming a data race with `push/pop` on state.
+- Making consumers exit immediately after close, discarding already-accepted elements.
+- Using only `notify_one`, leaving some permanently waiting consumers unable to exit after close.
+- Using two inconsistent locks to protect the queue and close state separately.
+
+---
+
+## 6. Concurrent-Safe LRU Cache
+
+### Implement a Fixed-Capacity LRU
+
+**Applicable identity:** Intern / New graduate / Experienced hire
+
+**Assessed points:** list/map combination, invariants, iterator stability, concurrency linearization, exception safety.
+
+**Question:** Implement a key-value LRU where `get` promotes to most-recently-used on hit, and `put` evicts the least-recently-used item when over capacity.
+
+- Input: positive capacity, keys, and values.
+- Output: `get` returns `std::optional<V>`; `put` inserts or updates.
+- Constraints: average find/update is constant complexity; concurrent calls are safe; capacity never exceeds the upper bound.
+- Prohibited assumptions: read-only `get` doesn't modify state; hash/equality/copy never throw; returned references remain safe after unlocking.
+
+**Reference implementation highlights:**
+
+```cpp
+#include <cstddef>
+#include <list>
+#include <mutex>
+#include <optional>
+#include <stdexcept>
+#include <unordered_map>
+#include <utility>
+
+template <class K, class V>
+class LruCache {
+    using Entry = std::pair<K, V>;
+    using Iter = typename std::list<Entry>::iterator;
+
+public:
+    explicit LruCache(std::size_t capacity) : capacity_(capacity) {
+        if (capacity == 0) throw std::invalid_argument("capacity is zero");
+        if (capacity_ >= index_.max_size()) {
+            throw std::length_error("capacity is too large");
+        }
+        // Insert new item first then evict old; at most temporarily capacity + 1 map elements.
+        index_.reserve(capacity_ + 1);
+    }
+
+    std::optional<V> get(const K& key) {
+        std::lock_guard lock(mu_);
+        auto found = index_.find(key);
+        if (found == index_.end()) return std::nullopt;
+        items_.splice(items_.begin(), items_, found->second);
+        return found->second->second;
+    }
+
+    void put(K key, V value) {
+        std::lock_guard lock(mu_);
+        auto found = index_.find(key);
+        if (found != index_.end()) {
+            found->second->second = std::move(value);
+            items_.splice(items_.begin(), items_, found->second);
+            return;
+        }
+
+        // Eviction target's hash lookup completes before structural modification;
+        // iterator erase afterward does not throw.
+        auto victim = index_.end();
+        if (items_.size() == capacity_) {
+            victim = index_.find(items_.back().first);
+            if (victim == index_.end()) {
+                throw std::logic_error("LRU index invariant broken");
+            }
+        }
+
+        items_.emplace_front(std::move(key), std::move(value));
+        try {
+            const auto insertion =
+                index_.emplace(items_.front().first, items_.begin());
+            if (!insertion.second) {
+                throw std::logic_error("LRU key invariant broken");
+            }
+        } catch (...) {
+            items_.pop_front();
+            throw;
+        }
+
+        if (items_.size() > capacity_) {
+            // reserve(capacity + 1) guarantees the insert above won't trigger
+            // rehash from load growth, so the victim iterator is still valid here.
+            index_.erase(victim);
+            items_.pop_back();
+        }
+    }
+
+private:
+    const std::size_t capacity_;
+    std::mutex mu_;
+    std::list<Entry> items_;  // front is most recently used.
+    std::unordered_map<K, Iter> index_;
+};
+```
+
+- The single-lock version is the correctness baseline; `get` adjusts the list and cannot simply use a shared lock.
+- Core invariants: map and list correspond one-to-one, iterators point to matching keys, list size never exceeds capacity.
+- If `V` is expensive to copy, redesign to return ownership instead of returning a reference that may be invalidated after unlocking.
+
+**Continuous follow-up:**
+
+1. Layer 1: Why do we need both `list` and hash map, and what complexity does each carry?
+2. Layer 2: Why isn't `get` logically a read-only concurrent operation?
+3. Layer 3: How to roll back when `emplace_front` succeeds but map insertion fails?
+4. Layer 4: Sharded LRU can increase throughput, but how does it change the "globally least recently used" semantics?
+
+**Common errors:**
+
+- Deleting middle elements in a vector causing linear complexity, or storing iterators that become invalid.
+- Returning an internal `V&` then immediately unlocking, letting another thread evict the object.
+- Map insertion exception leaving an orphan node in the list.
+- Putting the recency-modifying `get` under a shared lock to pursue "read-write locks".
+
+---
+
+## 7. SPSC Ring Buffer
+
+### From Locked Version to Atomic Version
+
+**Applicable identity:** Experienced hire
+
+**Assessed points:** SPSC premises, ring buffer, invariants, happens-before, memory order, object lifecycle.
+
+**Question:** First implement a fixed-capacity single-producer single-consumer queue; a correct locked version passes the base evaluation, then discuss the lock-free version.
+
+- Input: producer calls `try_push(int)`, consumer calls `try_pop()`.
+- Output: push returns false when full, pop returns empty when empty; elements are neither lost nor duplicated.
+- Constraints: exactly one producer thread and one consumer thread; capacity at least 2; reserve one slot to distinguish full from empty.
+- Prohibited assumptions: `volatile` provides thread synchronization; relaxed atomics automatically publish ordinary memory; this implementation can safely extend to MPMC.
+
+**Reference implementation highlights:**
+
+```cpp
+#include <atomic>
+#include <cstddef>
+#include <optional>
+#include <stdexcept>
+#include <vector>
+
+class SpscIntQueue {
+public:
+    explicit SpscIntQueue(std::size_t slots) : buffer_(slots) {
+        if (slots < 2) throw std::invalid_argument("need at least two slots");
+    }
+
+    bool try_push(int value) noexcept {
+        const auto tail = tail_.load(std::memory_order_relaxed);
+        const auto next = increment(tail);
+        if (next == head_.load(std::memory_order_acquire)) return false;
+        buffer_[tail] = value;
+        tail_.store(next, std::memory_order_release);
+        return true;
+    }
+
+    std::optional<int> try_pop() noexcept {
+        const auto head = head_.load(std::memory_order_relaxed);
+        if (head == tail_.load(std::memory_order_acquire)) return std::nullopt;
+        const int value = buffer_[head];
+        head_.store(increment(head), std::memory_order_release);
+        return value;
+    }
+
+    std::size_t usable_capacity() const noexcept {
+        return buffer_.size() - 1;
+    }
+
+private:
+    std::size_t increment(std::size_t value) const noexcept {
+        return (value + 1) % buffer_.size();
+    }
+
+    std::vector<int> buffer_;
+    alignas(64) std::atomic<std::size_t> head_{0};
+    alignas(64) std::atomic<std::size_t> tail_{0};
+};
+```
+
+- The producer exclusively writes `tail`; the consumer exclusively writes `head`; the other side observes release-published indices and slot access via acquire.
+- Here only `int` is stored, avoiding generic `T`'s placement construction, destruction, and exception issues.
+- `alignas(64)` expresses intent to reduce false sharing but is not a standard guarantee of cache line size on all platforms; performance still needs benchmarking.
+
+**Continuous follow-up:**
+
+1. Layer 1: Why reserve one slot — an array of capacity N can only store N-1 values?
+2. Layer 2: Which ordinary memory writes do the producer's release store and consumer's acquire load publish?
+3. Layer 3: Which same-thread index reads can use relaxed, and why can't all operations be made relaxed?
+4. Layer 4: To support generic `T`, batch operations, counter wraparound, or MPMC, what additional lifecycle and synchronization protocols are needed?
+
+**Common errors:**
+
+- Using `volatile` instead of atomic, forming a data race.
+- Not constraining to SPSC yet letting multiple producers write the same tail or slot.
+- Publishing tail before writing the slot, letting the consumer read unconstructed data.
+- Passing stress tests only on x86 and then asserting wrong memory orders are correct on all architectures.
+
+---
+
+## 8. Fixed-Block Memory Pool
+
+### Design a Fixed-Size Object Pool
+
+**Applicable identity:** New graduate / Experienced hire
+
+**Assessed points:** Alignment, object vs storage lifetime, placement construction, exception rollback, pool lifetime.
+
+**Question:** Design an object pool serving a single type `T` with fixed capacity.
+
+- Input: capacity N; `create(args...)` constructs objects; `destroy(T*)` destructs and returns the slot.
+- Output: at most N objects alive simultaneously; explicit failure when exhausted; all borrowed objects must be returned before the pool is destroyed.
+- Constraints: storage satisfies `alignof(T)`; slot returned when construction throws; double free and freeing external pointers forbidden.
+- Prohibited assumptions: raw bytes already mean a `T` object exists; `malloc` always satisfies over-aligned `T`; the pool can be destroyed before its objects.
+
+**Reference implementation highlights (design question):**
+
+- The constructor allocates all `Slot` backing storage at fixed length once, e.g., `std::unique_ptr<Slot[]>`, or a `std::vector<Slot>` constructed at final length; after initialization never resize, reserve, reallocate, or move that storage.
+- The pool forbids copy and move: delete copy/move constructors and assignments; while any external live `T*` exists, the pool object and backing storage must maintain address stability.
+- `Slot` contains `alignas(T) std::byte storage[sizeof(T)]`, an occupancy flag, and a free-list index.
+- `create` takes a slot from the free-list, then begins the object's lifetime with `std::construct_at(reinterpret_cast<T*>(storage), args...)`; if construction throws, hang the slot back on the free-list.
+- `destroy` first verifies the pointer is at some slot's start address and currently occupied, then calls `std::destroy_at`, finally returning the slot.
+- The single-threaded baseline need not pretend to be lock-free; a thread-safe version first uses a mutex to protect the free-list and occupancy state.
+- **Acceptance invariants:**
+  - `live_count + free_count == capacity`.
+  - Each slot has at most one live `T`.
+  - Only successfully constructed objects are destructed, exactly once.
+  - No exception path loses a slot or changes other live objects.
+  - Backing storage is allocated once from constructor completion to pool destruction, never reallocated/moved; every live `T*` address remains stable.
+  - The pool itself forbids copy/move; during external live pointers, its storage owner cannot change via container migration or swap.
+  - At pool destruction `live_count == 0`, otherwise assert per contract or return an explicit error — never silently free live object storage.
+
+**Continuous follow-up:**
+
+1. Layer 1: What is the difference between raw storage being available and a `T` object's lifetime beginning?
+2. Layer 2: After a constructor throws, how does the free-list restore to its pre-call state?
+3. Layer 3: How to verify an address passed to `destroy` is truly a slot start and currently live?
+4. Layer 4: How do thread-local caches reduce contention, and how do they affect memory return, fairness, and pool destruction?
+
+**Common errors:**
+
+- Treating aligned bytes as already-constructed objects.
+- Not returning slots after failed construction, gradually exhausting capacity.
+- Pool destroyed first while external object pointers remain, forming use-after-free.
+- Using a growable container to hold `Slot`, so capacity growth or pool movement dangles all external `T*`.
+- Judging validity only by address range without checking slot boundaries, occupancy state, and double free.
+
+---
+
+## 9. `epoll` Echo Server Skeleton
+
+### Design a Non-Blocking Echo Server
+
+**Applicable identity:** New graduate / Experienced hire
+
+**Assessed points:** Linux fd lifecycle, non-blocking I/O, LT/ET, partial read/write, connection state machine, backpressure.
+
+**Question:** Design a single-reactor `epoll` Echo Server skeleton on Linux.
+
+- Input: listen address and port; clients send arbitrary byte streams.
+- Output: each connection echoes back the same bytes in receive order; connections are cleaned up after the peer closes.
+- Constraints: listen/client fds are non-blocking; correctly handle `EAGAIN`, `EINTR`, partial writes, half-close, and fd reuse.
+- Prohibited assumptions: one `read`/`write` handles a complete message; one readiness corresponds to exactly one event; there is no remaining readable data when `EPOLLRDHUP` arrives.
+
+**Reference implementation highlights (design question, Linux-only):**
+
+- The listening socket sets `SO_REUSEADDR` and `O_NONBLOCK`, registers `EPOLLIN`; the accept loop continues until `EAGAIN`.
+- Each connection owns independent state: RAII fd, input buffer, pending send buffer, send offset, close flag; forbidden to store stateless dangling callbacks keyed only by integer fd.
+- LT mode first ensures correctness; ET mode requires accept/read/write all to loop to `EAGAIN`.
+- `read == 0` means the peer finished sending; still decide per protocol whether to send buffered responses, then close.
+- `write` may write only partially; Linux can use `send(..., MSG_NOSIGNAL)` to prevent process-level `SIGPIPE` when the peer has closed. Other platforms use their explicit equivalents; globally ignoring `SIGPIPE` at process startup affects all libraries and sockets and can only be a reviewed process-level policy.
+- When receiving combined events of `EPOLLIN` with `EPOLLERR`/`EPOLLHUP`/`EPOLLRDHUP`, first drain already-readable data to `EAGAIN`/EOF per non-blocking rules, then decide per protocol whether to echo buffered data or close — do not discard already-read content just because HUP arrived.
+- `EPOLLERR` uses `getsockopt(fd, SOL_SOCKET, SO_ERROR, ...)` to read and log the pending error; `ECONNRESET`, `EPIPE` on send, and unrecoverable `SO_ERROR` enter unified cleanup. `EPOLLHUP`/`EPOLLRDHUP` mark peer direction termination and do not replace read drain.
+- Keep the unsent remaining range and register `EPOLLOUT`; remove that interest when the write buffer empties to avoid busy loops.
+- Set input and output high-water marks per connection; beyond the limit, pause `EPOLLIN` or close the connection to prevent slow clients from causing unbounded memory.
+- Look up connection state before handling events; on close, first remove from epoll and remove state, then close the fd via RAII. Old events must not operate on an fd already reused as a new connection.
+- **Acceptance invariants:**
+  - Every accepted fd is closed exactly once.
+  - The output buffer always equals the byte sequence "read but not yet successfully written back".
+  - `EPOLLOUT` is only enabled when there are pending bytes to send.
+  - Every connection's buffer has a hard limit; a single slow connection cannot block the reactor or exhaust process memory.
+  - Peer close never terminates the whole process via `SIGPIPE`; each send's suppression strategy or reviewed process-level policy must be explicit.
+  - `EPOLLERR` must read `SO_ERROR`; HUP/RDHUP/RESET/EPIPE enter unified cleanup exactly once after drain and protocol decisions.
+  - All error paths remove connection state, keeping no callbacks pointing to destroyed objects.
+
+**Continuous follow-up:**
+
+1. Layer 1: What are the differences in read loops between LT and ET, and why is it recommended to first write a correct LT version?
+2. Layer 2: How to handle partial writes and avoid persistent writable events causing CPU busy loops?
+3. Layer 3: When fd numbers are quickly reused, how can old events or async tasks harm the new connection? How to guard with generation/token?
+4. Layer 4: What is the handling order of `SIGPIPE`, `EPOLLERR/HUP/RDHUP`, `SO_ERROR`, and read drain?
+5. Layer 5: How to design multiple reactors, cross-thread handoff, graceful shutdown, and per-connection backpressure?
+
+**Common errors:**
+
+- Treating TCP as a message protocol where one `read` corresponds to one complete request.
+- Reading only once under ET, with remaining data no longer triggering edges.
+- Permanently subscribing to `EPOLLOUT`, with idle connections constantly waking.
+- Not suppressing `SIGPIPE`, where writing to a closed peer terminates the whole process; or globally ignoring the signal without evaluation, changing third-party library behavior.
+- Treating `EPOLLHUP` as "close immediately" without draining ready data; ignoring `EPOLLERR`'s `SO_ERROR`, or not unifying cleanup for `ECONNRESET`/`EPIPE`.
+- Keeping state or async tasks after closing the fd, identifying connections only by fd integer.
+
+---
+
+## 10. Comprehensive Scoring Hints
+
+- **Intern:** Prefer RAII, bounded blocking queue, or locked LRU; writing clear ownership, close paths, and basic tests meets the bar; lock-free is not required.
+- **New graduate:** May choose Rule of Five, thread pool, memory pool design, or `epoll` state machine; must be able to explain exception paths and resource reclamation.
+- **Experienced hire:** May choose SPSC, thread pool shutdown protocol, or `epoll` backpressure; must distinguish language guarantees, platform contracts, and performance assumptions.
+- **One-vote veto risks:** double free/use-after-free, unjoined threads at destruction, data races, wrong memory order with claims of "stress tested so it's correct", broken ownership invariants after exceptions.
+
+Every implementation question must at least verify the normal path, boundaries, error paths, and resource exit. Concurrent questions should run ThreadSanitizer beyond ordinary tests; lifecycle questions should run AddressSanitizer/UndefinedBehaviorSanitizer. Performance comparisons must first ensure semantic equivalence, then provide reproducible benchmarks.

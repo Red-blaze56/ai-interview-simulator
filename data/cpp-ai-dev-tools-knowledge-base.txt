@@ -1,0 +1,440 @@
+# AI-Assisted C++ Backend Development Knowledge Base
+
+> This file maintains only AI's specialized usage in C++ language, builds, testing, diagnostics, and performance validation.
+> Any generated result must be bound to the target C++ standard, compiler, standard library, target, build flags, and runtime platform. AI's code explanation is not compilation evidence, and static reading alone cannot prove lifetime, atomic synchronization, or performance conclusions.
+
+---
+
+## 1. Build System and Dependency Context
+
+### Facts AI Must Obtain Before Starting Modifications
+
+Have AI read the real project first, rather than directly generating a "usually correct" CMake snippet. The minimal context includes:
+
+- C++ standard: whether the project explicitly uses C++17, C++20, or C++23, and whether compiler extensions are disabled.
+- compiler and version: Clang, GCC, MSVC, or another toolchain; target triple, sysroot, and cross-compilation environment.
+- standard library: libstdc++, libc++, or another implementation; whether its ABI switches and deployment environment are consistent.
+- build entry: CMake preset, Bazel target, Meson setup, Make target, or project wrapper script.
+- compile options: warning, optimization, debug info, exception, RTTI, LTO, sanitizer, and ABI-related macros.
+- dependency sources: system packages, source submodules, package manager, or vendored code; whether version and link mode are pinned.
+- target types: static library, dynamic library, executable, plugin, or cross-language ABI; whether tests and production use the same set of key definitions.
+
+If these facts are unknown, AI should list items to be confirmed, and must not arbitrarily fill in the latest dependency versions, switch standard library, or change exception/RTTI policy.
+
+### Security Boundary for Executing Untrusted Repository Commands
+
+Repository scripts, build entries, and test commands are all code pending review; they must not be trusted by default merely because the name is `build`, `test`, or AI recommended them. Before execution:
+
+- First read wrapper scripts, CMake/Bazel hooks, package manager configuration, and actual subcommands, identifying downloads, uploads, deletions, writes to the home directory, starting services, and shell expansion.
+- Run in a sandbox, container, or other least-privilege environment; do not inject production credentials, personal tokens, SSH agent, cloud metadata, or real business data.
+- Restrict network and filesystem access by default, opening only the workspace and temp directories required for the build; dependency downloads must confirm source, version, checksum, and network destination.
+- Set CPU, memory, process count, disk, and time limits to prevent malicious or runaway compilation, tests, fuzz/benchmark from consuming host resources.
+- Dependency download, codegen, post-install hooks, custom compiler/plugin, custom analyzer, and test fixture bootstrap must be confirmed before running.
+- Do not blindly run arbitrary build/test commands; when side effects cannot be isolated, perform static review first or have a human confirm the specific command and permissions.
+
+### Review Order for Build Modifications
+
+1. **Reproduce the original command**: execute the project's existing configure and build commands from a clean build directory, keeping the first compiler/linker error.
+2. **Locate target boundaries**: confirm which target the include directory, compile definition, compile option, and link dependency should belong to.
+3. **Use target-scoped configuration**: prefer local declarations such as `target_compile_features`, `target_include_directories`, `target_link_libraries`, avoiding global flags polluting unrelated targets.
+4. **Check transitive attributes**: `PRIVATE`, `PUBLIC`, `INTERFACE` must correspond to real consumption relationships; do not change everything to `PUBLIC` just to make local compilation pass.
+5. **Verify generated commands**: inspect the verbose build or compilation database to confirm AI's changes actually reached the target translation unit.
+6. **Verify installation and consumption**: library projects should also test references from an independent consumer after install/export, not only builds within the source tree.
+
+### Handling Template Errors and Link Errors
+
+AI is suited to "candidate root-cause compression" for long template diagnostics, but not to taking the last error line as the root cause. Require it to analyze in the following format:
+
+- What is the first instantiation point in user code.
+- At which step substitution, constraint, or overload resolution failed.
+- Which candidate was excluded, and whether the reason comes from type, cv/ref, lifetime, or concept.
+- Whether the minimal fix changes the public API, value category, or overload set.
+- Which minimal compile test should be added to prevent regression.
+
+Link errors must first be distinguished among:
+
+- declaration exists but definition is missing;
+- template definition is not visible to the instantiation point;
+- symbol name/namespace/signature mismatch;
+- static library link order or missing transitive dependency;
+- ABI, visibility, architecture, or standard library mismatch;
+- ODR violation, duplicate definition, or non-equivalent inline definitions.
+
+Do not let AI use "move all definitions to headers", "link all libraries", or "disable warnings/errors" as default fixes.
+
+### Reproducible Prompt
+
+```text
+First read the current target's build files, compile_commands.json, and the failing command.
+Environment: C++20, Clang 17, libc++, arm64.
+Task: only fix the first compilation error of target `cache_tests`.
+Requirements:
+1. Keep the full English compiler diagnostic and point out the first user-code instantiation point.
+2. Add no new dependencies, modify no global compiler flags, disable no warnings.
+3. Explain whether the fix affects ABI, exception specification, or overload resolution.
+4. Verify with the original failing command and that target's tests; explicitly mark configurations not run.
+```
+
+### Continuous Follow-up
+
+1. How does AI confirm the actual compilation is C++20 rather than concluding solely from seeing `CMAKE_CXX_STANDARD`?
+2. Why can a header-only dependency still have ABI, macro, and compile option conflicts?
+3. Why is the standard library stack at the end of a template error often not the root cause location?
+4. After a local debug build passes, why must release, sanitizer, and target deployment toolchains still be verified?
+
+### Common Hallucinations
+
+- Inventing non-existent CMake commands, target names, or package components.
+- Mixing GCC, Clang, and MSVC flags, or treating a certain compiler extension as standard syntax.
+- Adding global include paths, definitions, or linker options without reading the build graph.
+- Adding libraries upon seeing `undefined reference` without checking signature, namespace, ABI, and link order.
+- After modifying a template constraint, only saying "the compiler can deduce it" without actually compiling the target instance.
+
+---
+
+## 2. Lifetime, Ownership, and Undefined Behavior Review
+
+### Draw Ownership and Borrowing Relationships First
+
+When AI reviews generated C++ code, it should first answer the following for each resource:
+
+- Who creates, who owns, who destroys;
+- Whether ownership is unique, shared, externally managed, or pure borrowing;
+- Whether a borrow can cross threads, callbacks, container reallocation, asynchronous tasks, or coroutine suspension points;
+- What invariants the source object satisfies after a move;
+- What gets cleaned up respectively on mid-construction failure, assignment failure, and destruction;
+- Whether a raw pointer/reference/view might outlive its owner.
+
+Seeing a smart pointer alone does not end the review. `std::shared_ptr` can prevent a specific object from being destroyed too early, but cannot automatically prevent cycles, data races, logical resource leaks, or concurrent access to the pointee.
+
+### Lifetime Risks AI Should Flag
+
+- Returning a pointer, reference, iterator, `std::span`, or `std::string_view` to a local object.
+- A lambda capturing local variables by reference then entering an asynchronous executor.
+- Continuing to use a pointer, reference, or iterator after container reallocation/erase.
+- Capturing `this` into a callback whose lifetime exceeds the object.
+- A custom deleter that does not match the resource's actual release API.
+- Omitting destruction after placement construction, or accessing storage before the object's lifetime begins.
+- A base class deleted through a base pointer while the destructor is non-virtual.
+- Move assignment overwriting old resources, self-move, or incorrect handling of the moved-from state.
+- Partially constructed objects, locks, fds, memory, or transaction tokens not rolled back on exception paths.
+
+### Exception Safety Must Be Expressed with Invariants
+
+Require AI to state the guarantee level of each operation explicitly, rather than vaguely saying "exception-safe":
+
+- **no-throw guarantee**: the operation does not throw; commonly used in destructors, swap, and resource release paths, but must match the members' real capabilities.
+- **strong guarantee**: on failure, externally observable state is equivalent to before the call; commonly achieved by constructing a temporary result first and then committing.
+- **basic guarantee**: after failure, the object still satisfies its invariants and leaks no resources, but values may change.
+- **no guarantee**: state after an exception is unconstrained; if this is intentional it must be written down explicitly as a contract.
+
+The review order is: list invariants, find possible throw points, determine committed state before and after each throw point, check RAII rollback, and only then evaluate the guarantee level. Mechanically adding `noexcept` to a function is not an optimization; if an internal exception escapes, it invokes `std::terminate`.
+
+### Undefined Behavior Cannot Be Excluded by "It Runs Fine"
+
+AI should mark the following conclusions as pending dynamic or compiler verification:
+
+- use-after-free, double delete, out-of-bounds, invalid downcast;
+- signed overflow, invalid shift, misalignment, strict aliasing violation;
+- uninitialized read, invalid object lifetime, wrong format argument;
+- data race, concurrent access to non-thread-safe objects;
+- views, iterators, and callbacks crossing an API lifetime contract.
+
+One ordinary run without crashing only shows that no failure was observed for that input and build; it does not prove the absence of undefined behavior. Changes in optimization level, allocator, thread scheduling, and target architecture can all change behavior.
+
+### Review and Verification Matrix
+
+| Risk | Static review question | Minimal runtime evidence |
+|------|------------------------|--------------------------|
+| owning pointer | is copy/move/delete unique | unit test + ASan/LSan |
+| borrowed view | does the owner cover the whole usage period | boundary test + ASan |
+| exception rollback | which operations are committed | fault injection test |
+| polymorphic delete | is the base destructor virtual | compile test + UBSan |
+| iterator invalidation | which operation invalidates | targeted test + debug iterators (if the implementation supports) |
+| integer/shift/alignment | can the precondition be proven | UBSan + boundary cases |
+
+### Prompt Example
+
+```text
+Review the ownership and exception safety of this C++20 code.
+First output a resource table: resource, owner, borrower, release point, exception path.
+Then list the invariants and guarantees of each public operation.
+Do not treat shared ownership as thread safety.
+Provide tests that fail before the fix, and specify the verification value of ASan, UBSan, or LSan respectively.
+If something can only be suspected but not proven, mark it as a hypothesis; do not write it as a confirmed defect.
+```
+
+### Continuous Follow-up
+
+1. Why can passing `std::string_view` by value still dangle?
+2. When copy-and-swap provides the strong guarantee, how do copy cost, allocator propagation, and self-assignment change?
+3. When the third member's initialization throws in a constructor, which destructors run, and does the class's own destructor run?
+4. Why does ASan reporting nothing not prove all lifetime contracts are correct?
+
+### Common Hallucinations
+
+- Seeing a smart pointer and asserting "no memory leaks, thread safe".
+- Assuming move always clears all fields, or that a moved-from object can only be destructed, not assigned.
+- Treating `noexcept` as syntax for ignoring errors, without analyzing the terminate path.
+- Using one debug run to prove iterator, view, or reference lifetime safety.
+- Fixing dangling references by converting all values to shared ownership, creating cycles and unclear lifetimes.
+
+---
+
+## 3. Concurrency and Memory Model Review
+
+### Define Shared State and Synchronization Protocol First
+
+Before giving lock, atomic, or lock-free modifications, AI must list:
+
+- which objects are accessed by which threads;
+- which accesses conflict with each other, and whether at least one is a write;
+- which mutex, which message passing, or which set of atomic orders protects each business invariant;
+- whether object lifetime covers all thread accesses;
+- how shutdown stops new work, wakes waiters, and joins;
+- how callbacks and task exceptions propagate or are isolated.
+
+"Changing a field to atomic" only protects that field's atomic access; it does not automatically protect cross-field invariants, container internal state, or the pointee.
+
+### Mutex and Condition Variable Review
+
+- condition variable waits must be bound to a predicate, with predicate state read under the same mutex.
+- After modifying the predicate, deciding whether to notify inside or outside the lock should be based on invariants and scheduling cost, not mechanically applying a template.
+- Do not execute unknown callbacks, blocking I/O, long tasks, or wait on another future while holding a lock.
+- Specify lock ordering explicitly; if AI suggests adding a second lock, it must provide a global order or prove it will not be nested.
+- shutdown must distinguish stop accepting, drain, immediate cancel, and join; one bool is often insufficient to express complex state.
+- thread destructor, exception paths, and mid-construction failure must all handle joinable threads.
+
+### Atomic and Memory Order Review
+
+For each atomic operation, require AI to answer:
+
+1. Does it guarantee atomic read-modify-write, or does it also carry the synchronization role of publishing/acquiring ordinary memory?
+2. Which writes before the release operation need to be published?
+3. Which reads after the acquire operation depend on it for visibility?
+4. Through which reads-from or release sequence do the two establish synchronizes-with?
+5. If changed to relaxed, which happens-before would be lost?
+6. How does object reclamation guarantee no thread still holds the old pointer?
+
+AI-generated `memory_order_relaxed/acquire/release/acq_rel/seq_cst` must not be accepted just because the code looks reasonable. At minimum there should be:
+
+- a hand-drawn happens-before relationship;
+- a textual proof of the algorithm's preconditions;
+- a concurrency test coverable by ThreadSanitizer;
+- target weak-memory architecture tests or a trusted model tool (if the project adopts one);
+- differential testing against a correct locked version.
+
+ThreadSanitizer can discover many real data races, but does not prove algorithm linearization, memory order minimality, ABA safety, or reclamation correctness.
+
+### Lock-free Is Not the Default Answer
+
+- Both interviews and production modifications should first establish a correct locked version with behavior tests.
+- lock-free only means a system-level progress guarantee; it does not mean low latency, low CPU, or faster under the current load.
+- CAS loops must handle retries, contention, ABA, false sharing, backoff, and starvation.
+- pointer-based lock-free structures additionally require hazard pointers, epochs, an RCU-like protocol, or other safe reclamation.
+- If AI removes a mutex, it must provide equivalent semantics, a linearization point, and benchmarks; merely saying "reduces lock contention" is not evidence.
+
+### Concurrency Testing Requirements
+
+- Use barrier/latch or explicit handshakes to establish start conditions; do not guess scheduling with sleep.
+- Tests must have a deadline; on failure, output thread state or minimal diagnostics.
+- Repeated runs only raise exposure probability; they are not proof of correctness.
+- The same test should run under a normal build, a ThreadSanitizer build, and a necessary AddressSanitizer build.
+- shutdown, empty queue, full queue, exception, cancellation, construction failure, and destruction order all need test cases.
+
+### Prompt Example
+
+```text
+Review this SPSC queue; do not change memory order first.
+Output:
+1. The state exclusively written by producer and consumer respectively;
+2. The happens-before chain of each slot write, index publication, index observation, and slot read;
+3. The necessity of each atomic operation's current order;
+4. The specific visibility a relaxed substitution experiment would break;
+5. A plan for differential testing against a mutex baseline.
+Finally state what TSan can and cannot check.
+```
+
+### Continuous Follow-up
+
+1. What is the difference between a data race and a business race condition? Does absence of data races equal algorithm correctness?
+2. Why are condition variables allowed to have spurious wakeups, and who should protect the predicate?
+3. After release/acquire synchronization is established, which non-atomic writes are visible to the reading thread?
+4. After passing TSan, why is lock-free queue reclamation and linearization still unproven?
+
+### Common Hallucinations
+
+- Using `volatile` to solve thread visibility or atomicity.
+- Changing all atomics to relaxed and explaining cross-object protocols with "single-variable atomicity".
+- Changing all operations to sequential consistency and then claiming lifetime and algorithm are definitely correct.
+- Asserting there are no concurrency defects because TSan reported nothing.
+- Replacing a mutex with a CAS loop without establishing a performance baseline.
+
+---
+
+## 4. Testing, Sanitizers, and Performance Evidence
+
+### The Compiler Is the First Verification
+
+After generating C++, AI should at least run the target project's real compile command. Enabling strict warnings when the project allows is recommended, but the repository-wide warning policy must not be changed without evaluation.
+Before running these commands, the "untrusted repository" boundary still applies: review the entry first, run under sandbox/least privilege, without production credentials, restricting network, file access, and CPU/memory/time; dependency download, codegen, post-install, and custom analyzers require confirmation first.
+
+Typical local verification commands (illustrative):
+
+```bash
+cmake --preset debug
+cmake --build --preset debug --target target_tests --verbose
+ctest --preset debug --output-on-failure
+```
+
+Standalone small programs may use:
+
+```bash
+clang++ -std=c++20 -Wall -Wextra -Wpedantic -Wconversion \
+  -pthread example.cpp -o example
+./example
+```
+
+Actual commands must follow the project's existing configuration. Only running a formatter or reading statically cannot discover missing includes, ODR, template instantiation, link, and ABI problems.
+
+### Test Layering
+
+- **Compile test**: whether templates are instantiable, whether concepts/overloads are selected correctly, whether headers are self-contained.
+- **Unit test**: value semantics, invariants, boundaries, exceptions, and resource release.
+- **Concurrency test**: coordinated interleavings, shutdown, cancel, and stress scenarios.
+- **Integration test**: real allocator, filesystem, socket, dynamic library, or target ABI.
+- **Regression test**: first prove the old implementation fails for the expected reason, then verify the fix.
+
+Be alert to the following when AI generates tests:
+
+- verifying only that nothing crashes, without asserting invariants;
+- the test copies the implementation algorithm, so both may be wrong together;
+- testing only the happy path, with no injected allocation, constructor, I/O, or callback failure;
+- concurrency tests relying on sleep;
+- treating a benchmark as a correctness test.
+
+### Sanitizer Selection
+
+| Tool | Mainly finds | Cannot prove |
+|------|--------------|--------------|
+| AddressSanitizer | common out-of-bounds, use-after-free, some use-after-scope | all lifetime contracts, logical leaks, thread correctness |
+| UndefinedBehaviorSanitizer | many dynamically detectable undefined behaviors | all UB in the standard, unexecuted paths |
+| LeakSanitizer | reachability-related memory leaks at process exit | fd, connection, thread, and other non-memory resource leaks |
+| ThreadSanitizer | many data races on executed paths | no business races, no deadlocks, lock-free algorithm correctness |
+| MemorySanitizer | some uninitialized memory reads (requires a fully instrumented environment) | all problems in uninstrumented dependencies |
+
+Common commands (illustrative):
+
+```bash
+clang++ -std=c++20 -O1 -g -fno-omit-frame-pointer \
+  -fsanitize=address,undefined example.cpp -pthread -o example_asan
+./example_asan
+
+clang++ -std=c++20 -O1 -g -fno-omit-frame-pointer \
+  -fsanitize=thread example.cpp -pthread -o example_tsan
+./example_tsan
+```
+
+- ASan and TSan are usually built and run separately; do not assume they can be freely combined.
+- sanitizers change layout, timing, and performance; sanitizer builds are not used for performance conclusions.
+- Some platforms, allocators, static links, or third-party binaries are incompatible with sanitizers; uncovered areas must be recorded.
+
+### Minimum Evidence Standard for Benchmarks
+
+Before AI claims "faster", "reduces allocations", or "reduces lock contention", at minimum provide:
+
+- an A/B implementation against a semantically equivalent baseline;
+- fixed compiler, flags, CPU, frequency policy, input distribution, and concurrency degree;
+- warmup, repeated runs, and statistical results rather than a single wall-clock measurement;
+- a consumption method that prevents dead-code elimination;
+- throughput, latency percentiles, CPU, allocation, and contention metrics relevant to the goal;
+- correctness tests and sanitizer tests passing first;
+- a profile pointing at the modified hotspot, not just a changing benchmark number.
+
+A microbenchmark only answers controlled small scenarios. Online gains are also affected by cache, NUMA, allocator, I/O, batching, and workload distribution.
+
+### Performance Review Process
+
+1. Describe the business metric and regression magnitude.
+2. Obtain a reproducible baseline.
+3. Use a profiler or hardware counters to locate hotspots.
+4. Have AI propose multiple falsifiable hypotheses, not directly give an "optimized version".
+5. Change only one key factor at a time.
+6. Run correctness, sanitizer, and benchmark tests.
+7. Check p50/p99, CPU, memory, binary size, or build time for side effects.
+
+### Continuous Follow-up
+
+1. Why can sanitizer build timings not be used to prove production optimization gains?
+2. Which AI modifications are ASan, UBSan, and TSan each best suited to verify?
+3. When a benchmark is 10% faster, which environmental noise, semantic differences, and statistical issues should be checked?
+4. What illusion arises when the compiler optimizes away the logic under test?
+
+### Common Hallucinations
+
+- Skipping the compiler because the generated code "looks syntactically correct".
+- Passing one sanitizer and concluding all memory, thread, and UB risks are gone.
+- Asserting performance gains directly from Big-O or removing one line of allocation code.
+- Comparing debug vs release, different compiler flags, or different inputs.
+- Rewriting the hot spot based on AI guesses when the profile does not point at the target function.
+
+---
+
+## 5. Common AI Hallucinations and Verification Methods
+
+### High-Risk Hallucination Table
+
+| Hallucination type | Common manifestation | Must verify with |
+|--------------------|----------------------|------------------|
+| non-existent or wrong-version API | mixing standards, compiler intrinsics, or library versions | target toolchain compilation and official headers |
+| wrong lifetime | returning temporary views, capturing references asynchronously, double free after move | boundary tests, ASan/LSan, ownership review |
+| wrong exception guarantee | adding `noexcept` arbitrarily, claiming strong guarantee after partial commit | fault injection, invariant tests |
+| wrong memory order | choosing relaxed/acquire/release without a happens-before proof | memory model derivation, TSan, weak-memory tests |
+| wrong template fix | covering the root cause with casts, deleting constraints, or moving to headers | original instantiation command, compile test |
+| wrong performance conclusion | "lock-free is necessarily faster", "move is always zero-cost" | equivalent benchmark, profile, target load |
+| wrong platform assumptions | hard-coding pointer, cache line, fd, or syscall behavior | target/ABI/OS documentation and target execution |
+
+### Minimal Verification Loop
+
+1. **Review execution boundaries**: treat repository commands as untrusted input, read scripts first; use sandbox/least privilege without production credentials, restrict network, files, CPU, memory, and time; confirm download/codegen/post-install/custom analyzer.
+2. **Fix the context**: record standard, compiler, standard library, target, flags, dependencies, and runtime platform.
+3. **Preserve original errors**: fully keep the first English compiler/linker/sanitizer diagnostic and call stack, not just pasting an AI summary.
+4. **Construct a counterexample first**: turn the fix target into a compile failure, unit failure, sanitizer report, or benchmark baseline.
+5. **Minimal change**: do not opportunistically upgrade dependencies, switch build systems, or rewrite unrelated abstractions.
+6. **Local verification**: original failing command, focused tests, and corresponding sanitizer.
+7. **Scope verification**: related targets, integration configuration, and release build.
+8. **Performance verification**: only run benchmark/profile after the correctness loop closes.
+9. **Human explanation**: a reviewer can explain ownership, exception guarantee, happens-before, and evidence boundaries.
+
+### Interview Questions and Evaluation
+
+1. AI generates a class owning a raw pointer; which ownership and Rule of Zero/Five questions do you ask first?
+2. After AI changes a mutex to atomic, how do you prove cross-field invariants still hold?
+3. A template error has hundreds of lines; how do you find the first user instantiation point instead of deleting the constraint?
+4. AI claims an SPSC queue is 3x faster; which correctness, sanitizer, and benchmark conditions are indispensable?
+5. After ASan/TSan both pass, which uncovered risks still require human analysis?
+
+**Intern/new-graduate passing level:**
+
+- Compiles and runs tests first, does not treat AI output as the answer.
+- Can identify dangling references/views, double frees, unjoined threads, and basic data races.
+- Knows ASan and TSan solve different problems, and performance requires a benchmark.
+
+**Experienced-hire passing level:**
+
+- Can bind build target, ABI, exception guarantee, and concurrency invariant.
+- Can explain sanitizer coverage boundaries, happens-before, and lock-free reclamation risks.
+- Can design an equivalent baseline, reproducible benchmark, and profile-driven optimization loop.
+
+### Final Admission Checklist
+
+- [ ] Repository scripts and build entries reviewed; commands executed under sandbox/least privilege, without production credentials, with restricted network/files/CPU/memory/time.
+- [ ] Sources and side effects of dependency downloads, codegen, post-install, custom compiler/plugin, and custom analyzers confirmed.
+- [ ] Real target successfully compiled and linked by the target compiler.
+- [ ] Old and new behavior covered by focused tests; error paths and exit paths verified.
+- [ ] Ownership, borrowing, and object lifetime have explicit contracts.
+- [ ] Exception guarantees and all `noexcept` declarations are explainable.
+- [ ] Concurrency shared state, lock ordering, happens-before, and shutdown are explainable.
+- [ ] Corresponding ASan/UBSan/TSan/LSan run, or reasons and risks for not running are recorded.
+- [ ] Performance claims have equivalent benchmark and profile evidence.
+- [ ] No single compiler, standard library, ABI, or OS implementation has been written as a universal standard guarantee.

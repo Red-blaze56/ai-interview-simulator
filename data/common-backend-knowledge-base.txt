@@ -1,0 +1,376 @@
+# General Backend Technology Knowledge Base
+
+> This file maintains backend common knowledge independent of Java, C++, or Go. In interviews, examine mechanisms, constraints, evidence, and trade-offs first, then move into the primary language's implementation details.
+> Language runtimes, standard libraries, concurrency primitives, and framework specifics are maintained by the corresponding language knowledge bases, to avoid the same general conclusion appearing in multiple versions.
+
+---
+
+## Table of Contents
+
+- [1. MySQL](#1-mysql)
+- [2. Redis](#2-redis)
+- [3. Message Queues](#3-message-queues)
+- [4. Computer Networks](#4-computer-networks)
+- [5. Operating Systems](#5-operating-systems)
+- [6. Distributed Systems](#6-distributed-systems)
+- [7. System Design](#7-system-design)
+- [8. Performance Analysis and Troubleshooting](#8-performance-analysis-and-troubleshooting)
+- [9. Engineering Practices](#9-engineering-practices)
+
+---
+
+## 1. MySQL
+
+### Basic Questions and Answer Points
+
+**Indexing and Execution Plans**
+
+- **Why is B+ Tree suitable for database indexes?** — Multi-way structure reduces tree height and the number of random I/Os; non-leaf pages mainly store navigation keys; leaf pages are ordered by key, suitable for point queries, range scans, and sorting. When comparing index structures, consider page size, access patterns, update cost, and storage overhead together
+- **What is the relationship between clustered indexes, secondary indexes, covering, and lookups?** — InnoDB clustered index leaf pages store full rows; secondary index leaf entries store indexed columns and the primary key. When all query columns can be obtained from the selected index, a covering index is formed; otherwise, the clustered index is typically accessed again using the primary key in the secondary index, i.e., a lookup (回表). Whether it covers depends on the actual query columns and execution plan
+- **How to design a composite index?** — Start from real query patterns, filter selectivity, sort/group requirements, and covering needs. The leftmost prefix describes the usable ordered prefix, but whether columns after a range condition can participate in filtering or sorting must be judged by the specific execution plan — do not memorize the absolute rule "everything fails after a range"
+- **What problem does Index Condition Pushdown (ICP) solve?** — When the storage engine scans a secondary index, it first filters with pushdown-capable index column conditions, then decides whether to do a lookup, reducing unnecessary clustered index accesses. It is not the same as a covering index, nor does it apply to all access types, conditions, and storage engines; it must be confirmed via the target MySQL version's `EXPLAIN`/execution statistics
+- **What to focus on in EXPLAIN?** — `type`/access type reflects the access method, `possible_keys` and `key` distinguish candidate vs actual indexes, `key_len` helps determine the index prefix used, `rows` and `filtered` are optimizer estimates, `Extra`/execution plan nodes show clues like covering, ICP, sorting, temporary tables. MySQL 8.0.18+ can use `EXPLAIN ANALYZE` in applicable scenarios to compare actual row counts and elapsed time; no single field can independently prove performance
+- **How to understand common JOIN execution methods?** — Nested Loop is the foundational execution idea for relational joins; the optimizer can combine with indexes to form efficient index nested loops; Hash Join suits hashable equi-joins, but availability and selection rules depend on the MySQL version, execution plan, and data scale. Drive order, input cardinality, join conditions, indexes, memory, and spill-to-disk jointly determine cost — do not treat "small table drives large table" as a fixed mantra detached from the plan
+
+**Transactions, MVCC, and Locks**
+
+- **What problems do the ACID properties each solve?** — Atomicity ensures all operations in a transaction commit or roll back as a whole; Consistency means business constraints hold before and after the transaction; Isolation constrains how concurrent transactions affect each other; Durability ensures committed results are recoverable after failure
+- **How to weigh the four isolation levels?** — Stronger isolation means fewer anomaly phenomena, but usually higher concurrency and waiting costs. MySQL InnoDB defaults to `REPEATABLE READ`; actual behavior also depends on snapshot reads, current reads, lock ranges, and the specific version
+- **What is the core mechanism of MVCC?** — Row version information, the undo log version chain, and ReadView jointly determine whether a version is visible to the current transaction. `READ COMMITTED` typically creates a new ReadView for each consistent read; `REPEATABLE READ` typically reuses the consistent view within the transaction
+- **What is the difference between record locks, gap locks, and Next-Key Locks?** — Record locks lock index records; gap locks constrain insertions into index ranges; Next-Key Locks combine record and gap ranges. The lock range is determined by the access path and query conditions — do not equate "no index hit" simply with a fixed table lock
+- **How to handle database deadlocks?** — The database detects cycles in the wait-for graph and rolls back one transaction. The application must log deadlock errors and control retry boundaries; design-wise, unify resource access order, shorten transactions, reduce irrelevant lock ranges, and use deadlock logs to confirm the actual conflicting statements
+
+**SQL, Replication, and Scaling**
+
+- **How to locate slow SQL?** — First use the slow query log or a database observability platform to confirm frequency, percentile latency, and scan volume, then examine the execution plan, index statistics, lock waits, returned rows, and how the application invokes it. After optimization, compare against equivalent data and load
+- **What are the main execution stages of a single SQL?** — Connection and permission checks, parsing, optimizer generating a plan, executor calling the storage engine, returning results. Performance problems can occur in queuing, lock waits, execution, network transfer, or client consumption — not just in the SQL text
+- **What is the basic replication chain?** — The primary records binlog; the replica pulls and replays it. Read/write splitting can scale read capacity, but introduces replication lag, read-your-writes, and failover consistency issues
+- **When to consider sharding?** — Consider it when single-instance capacity, throughput, maintenance windows, or failure domains have become measured bottlenecks, and low-cost measures like indexes, SQL tuning, archiving, and read scaling are insufficient. Sharding introduces routing, cross-shard transactions, aggregation queries, and scaling/migration costs
+
+### Follow-Up Questions
+
+1. What are the filter, sort, and return columns of this query, and why can or can't the current index cover it?
+2. What do `Using index` and `Using index condition` respectively indicate, and why can the latter still perform lookups?
+3. When the `rows` estimate differs greatly from `EXPLAIN ANALYZE` actual row counts, which statistics and data distributions should be checked?
+4. After the JOIN algorithm or drive order changes, how do loop counts, random I/O, memory, and temporary results change?
+5. If adding an index improves read latency, how much do write amplification, lock contention, disk, and replication latency increase?
+6. When there is replication lag, how to ensure data the user just wrote is readable, and what staleness window does the business allow?
+7. After the solution goes live, which percentile latency, rows scanned, lock waits, and error rates to observe, and what is the rollback threshold?
+
+### Common Misconceptions
+
+- Using fixed data volume thresholds to decide sharding, without looking at row width, access patterns, hardware, SLA, and growth rate
+- Asserting an index is effective just from the `key` field, without checking rows scanned, lookups, sorting, and actual elapsed time
+- Treating ICP as a covering index, or asserting no lookup when seeing `Using index condition`
+- Only memorizing JOIN algorithm names without combining the target version's actual plan, input cardinality, and memory constraints
+- Summarizing `REPEATABLE READ` as "absolutely no phantom reads", ignoring the difference between snapshot reads and current reads
+- Using `SELECT *` and huge offsets to create unnecessary I/O, then trying to solve it solely by adding indexes
+- Only increasing retry counts on deadlock without fixing transaction boundaries, access order, and idempotency
+
+---
+
+## 2. Redis
+
+### Basic Questions and Answer Points
+
+**Data Structures, Persistence, and High Availability**
+
+- **What are the main reasons for Redis's low latency?** — Hot data lives in memory, the core command path is short, and it uses event-driven I/O with scenario-optimized data structures. Redis 6 introduced configurable I/O threads to offload some socket read/write and protocol processing; classic Redis 6 command execution is still primarily serialized on the main thread. Later versions continue to evolve multithreading — interview conclusions must be scoped to the target version, configuration, and specific commands
+- **What problem does SDS solve?** — Redis string objects use SDS (Simple Dynamic String) as their underlying string representation, explicitly storing length and capacity, supporting binary safety, constant-time length access, and reducing reallocations on repeated appends. The SDS structure layout evolves across versions — do not treat a specific set of internal fields or header types as a stable public API
+- **How to distinguish logical data types, internal encodings, and complexity?** — String, Hash, List, Set, Sorted Set, etc. are external logical types; internally, based on element count, size, and version, they can use int, raw/embstr, listpack, hashtable, skiplist, etc., converting when thresholds are triggered. Command complexity depends on command semantics, element count, result size, and the actual encoding — do not broadly claim "all Redis operations are O(1)"
+- **How to choose common data types?** — String suits scalars, counters, and bit operations; Hash suits field collections; List suits double-ended sequences; Set suits set relationships; Sorted Set suits score ordering and range queries. Selection should also consider required command complexity, internal encoding conversion, single key size, network return volume, and memory overhead
+- **How does RDB background snapshotting work?** — `BGSAVE` typically uses `fork` to create a child process to generate the snapshot; parent and child rely on the operating system's Copy-on-Write to share initial memory pages. Write traffic triggers page copying, so with large datasets, observe fork latency, extra memory, disk throughput, and container memory limits; specific implementation and platform capabilities must be verified by version
+- **How to weigh AOF's fsync policies?** — `appendfsync always` syncs frequently after appends, stronger durability but higher latency cost; `everysec` syncs periodically, trading off between failure window and throughput; `no` delegates sync scheduling to the operating system. Data loss window and performance are also affected by filesystem, disk, batching, and Redis version — do not just memorize fixed durations
+- **What is hybrid persistence?** — Redis versions supporting this capability can use an RDB-format baseline plus subsequent AOF increments in the AOF rewrite result, balancing recovery speed and incremental recording. Enablement, file organization, and compatibility vary by version; recovery drills should use the same version and configuration as production
+- **What problems do Sentinel and Cluster solve?** — Sentinel monitors non-sharded primary-replica deployments and assists with failover and service discovery, but does not shard data; Redis Cluster maps the keyspace to a fixed 16384 hash slots, with nodes responsible for a subset of slots and supporting slot migration and failover. Neither can eliminate the data loss risk in the asynchronous replication window, nor automatically solve hot keys
+- **How are expired keys deleted?** — Redis combines lazy expiration with active expiration: checks TTL on key access, while the background periodically samples and cleans expired keys. Sampling algorithms, time budgets, and configuration evolve across versions, so do not write it as a fixed number of times per second or guarantee memory is released the instant of expiry
+- **How does eviction work after reaching maxmemory?** — `maxmemory-policy` decides how to select from all keys or only keys with TTL, using approximate LRU, approximate LFU, random, remaining-TTL, etc., or `noeviction` to reject writes that would increase memory. Available policies expand with Redis versions, and LRU/LFU are typically sampling-approximate; selection must consider access distribution, re-buildability, and persistent data semantics
+
+**Cache Anomalies and Consistency**
+
+- **What is the difference between cache penetration, cache breakdown, and cache avalanche?** — Penetration is repeatedly querying non-existent data; breakdown is concurrent source refetching when a hot key expires; avalanche is a large number of keys expiring simultaneously or the cache cluster becoming unavailable. Corresponding strategies include bloom filters or null values, single-flight rebuild or logical expiration, expiration jitter, and isolation/degradation
+- **How does Cache Aside work?** — On read, check the cache first; on miss, read the database and backfill; on write, typically update the database first then delete the cache. It only narrows the inconsistency window — deletion failures, concurrent reads/writes, and retries still need to be handled by the business according to consistency goals
+- **How to design cache consistency?** — First define the acceptable inconsistency window and read/write model, then choose invalidation, update, change-log subscription, or message-driven sync. Critical operations need idempotency, retries, compensation, monitoring, and reconciliation — there is no single fixed ordering that suits all businesses
+- **What is the difference between expiration and eviction?** — Expiration is a key becoming invalid after reaching its TTL, typically cleaned via lazy deletion and active sampling; eviction is releasing space by policy after reaching the memory ceiling. Policies must consider hot distribution, re-buildability, and allowed write-failure behavior
+
+**Distributed Lock Boundaries**
+
+- **What are the minimum correctness requirements for a Redis lock?** — Locking uses an atomic conditional write with a unique token and expiration time; releasing atomically verifies the token then deletes; when business execution exceeds the lease, controlled renewal or failure exit is needed
+- **Why can't lease locks automatically guarantee business correctness?** — Process pauses, network partitions, failovers, and continuing execution after timeout can produce concurrent holders. For resources that cannot tolerate concurrent writes, use fencing tokens, database constraints, or other mechanisms that can reject expired holders
+
+**Multi-Level Cache Architecture and Selection**
+
+- **What scenarios suit local caches?** — Extremely high frequency, microsecond-read-sensitive, controlled data volume, and data that allows brief staleness. It reduces cross-process access but has each instance hold an independent copy, increasing invalidation broadcast, capacity planning, and consistency costs
+- **How to describe local cache memory cost?** — A local cache occupies **current process memory**, not naturally only the JVM heap. Java needs to distinguish in-heap objects from off-heap, and watch GC and object overhead; C++ needs to watch ownership, allocators, fragmentation, and RSS; Go needs to watch heap live set, GC frequency, escapes, and `GOMEMLIMIT`
+- **What scenarios suit Redis?** — Multi-instance shared, larger capacity, requiring unified TTL or atomic data structures, needing independent scaling and high availability. Real latency is determined by network topology, connection management, request size, hot keys, and server-side load — do not hardcode a fixed millisecond number
+- **When to adopt L1 + L2?** — Only when Redis access has been data-proven as the bottleneck, hotspots are concentrated, and the business accepts the L1 staleness window. The typical chain is in-process L1 → Redis L2 → data source; versioning, invalidation broadcast, source protection, capacity, and degradation must be designed together
+
+### Follow-Up Questions
+
+1. Why is a cache needed, and what is the evidence of the current database or downstream bottleneck?
+2. What is the complexity of this command at the current data scale and encoding, and how much data will it return or copy?
+3. When executing `BGSAVE` or AOF rewrite, how to observe peaks of fork, COW, disk, and container memory?
+4. During Sentinel failover or Cluster slot migration, how are client discovery, retries, and data consistency handled?
+5. What are the key count, value size, hit rate, TTL, eviction rate, and hot distribution respectively?
+6. How much memory does the local cache occupy in the current process, and how to observe and limit it under Java/C++/Go runtimes?
+7. How do multiple instances invalidate, how much staleness is allowed, and how to repair after message loss?
+8. When Redis fails, hot keys occur, or caches expire simultaneously, how to protect the data source?
+9. How to prove via load testing and production metrics that L1's benefit exceeds its complexity, and under what conditions to remove L1?
+
+### Common Misconceptions
+
+- Describing local caches uniformly as "occupying the JVM heap", ignoring other languages and off-heap implementations
+- Conflating logical types with internal encodings, or treating a specific Redis version's conversion thresholds as permanent specs
+- Thinking RDB is just "copying memory", ignoring fork latency and write-triggered COW memory peaks
+- Writing `everysec`, expiration cleanup cycles, or I/O threads effects as fixed numbers detached from the environment
+- Assuming Sentinel equals sharding, or that 16384 slots automatically eliminate hotspots and replication loss windows
+- Assuming LRU/LFU always maintains an exact global order, without checking sampling approximation and target version policy
+- Introducing L1 directly because of "one fewer network request", without measuring what proportion of end-to-end latency Redis latency takes
+- Thinking that updating the database first then deleting the cache achieves strong consistency, without handling deletion failures and concurrency windows
+- Equating setting an expiration time with a reliable distributed lock, without considering the old holder continuing to write
+- Caching all query results without capacity limits, key cardinality assessment, and anti-cache-pollution strategies
+
+---
+
+## 3. Message Queues
+
+### Basic Questions and Answer Points
+
+- **Why introduce a message queue?** — Typical goals are asynchronous decoupling, peak shaving and trough filling, cross-service event propagation, and failure isolation. Introduction brings increased end-to-end latency, duplicate and out-of-order handling, backlog governance, and operational costs
+- **How to choose a message system?** — Compare throughput, end-to-end latency, message model, ordering scope, persistence and replication, consumption semantics, backlog capacity, ecosystem, and operational capability. Kafka, RocketMQ, RabbitMQ, etc. are only candidate implementations, not standard answers
+- **How to avoid message loss?** — Producer acknowledgment and retries, broker persistence and replication per business goals, consumer committing progress after successful business processing; also monitor unrecoverable errors and backlogs. Every stage must have an explicit failure window
+- **How to handle duplicate consumption?** — The common delivery semantic is at-least-once; consumers must be idempotent. Use business unique keys, state machine conditional updates, database unique constraints, dedup tables, or idempotency records — do not rely only on in-memory flags
+- **How to guarantee ordering?** — First define the ordering scope; typically only local ordering for the same partition or the same business key can be guaranteed; producer routing, broker storage, and single-key consumption must maintain order. Global ordering significantly limits concurrency
+- **How to design retries and dead-letter queues?** — Distinguish transient from permanent errors, use limited counts, backoff, and jitter; beyond a threshold, route to dead letter or manual handling. Retries must preserve the reason, count, and original message, and avoid retry storms
+- **What problem do transactional messages or Outbox solve?** — They solve the atomicity gap between database state changes and message publishing. Outbox writes business data and an event table in a local transaction, then a separate publisher delivers; duplicate publishing, cleanup, and latency still need handling
+
+### Follow-Up Questions
+
+1. Without a message queue, can the business goal be achieved more simply with synchronous calls or database tasks?
+2. What are the boundaries for allowed loss, duplication, out-of-order, and delay?
+3. What happens when production succeeds but the response times out, or consumption succeeds but commit fails?
+4. After a consumer's downstream fails, how to calculate backlog growth rate, disk capacity, and recovery time?
+5. When adding partitions or consumers, how do local ordering and duplicate processing change?
+
+### Common Misconceptions
+
+- Claiming "messages are never lost" or "exactly-once" without stating the scope, external side effects, and failure model
+- Using a specific framework's default configuration instead of business reliability design
+- Retrying infinitely immediately on consumption failure, amplifying the outage and blocking normal messages
+- Pushing throughput down to a single partition for global ordering, without a business need for global ordering
+- Only monitoring consumption success rate, not backlog age, retry rate, dead-letter volume, and end-to-end latency
+
+---
+
+## 4. Computer Networks
+
+### Basic Questions and Answer Points
+
+**TCP, HTTP, and TLS**
+
+- **What problem does the TCP three-way handshake solve?** — Both sides exchange and confirm initial sequence numbers while verifying that the bidirectional send/receive paths work. A two-way handshake cannot let the server confirm the client has received the server's sequence number
+- **Why is TCP four-way teardown usually four steps?** — TCP is full-duplex; the two directions close independently; after receiving the peer's FIN, an ACK can be sent first, then a FIN after this direction's data has finished sending. ACK and FIN may also coalesce when conditions allow
+- **What is the difference between flow control and congestion control?** — Flow control protects the receiver via the receive window; congestion control adjusts the sending rate based on network feedback to avoid path overload. Troubleshooting throughput requires distinguishing application, receiver, and network bottlenecks
+- **What are the core differences between HTTP/1.1, HTTP/2, and HTTP/3?** — HTTP/1.1 often relies on multiple connections to mitigate head-of-line blocking; HTTP/2 multiplexes over a single TCP connection but is still affected by TCP-layer packet loss; HTTP/3 is based on QUIC, providing independent streams at the transport layer and improving connection establishment and migration
+- **What guarantees does TLS provide?** — Identity verification via certificate chain, key negotiation, and transport confidentiality and integrity. TLS 1.3 reduces handshake round trips, but certificate verification, domain validation, time, and trust anchors remain security-critical
+
+**DNS, Connections, and RPC**
+
+- **What caches exist in the DNS resolution chain?** — Application, operating system, local resolver, and recursive DNS may all cache; TTL, negative caching, and connection reuse affect when changes take effect. Troubleshooting must confirm the address the request actually resolved to
+- **Why do long-lived connections still fail?** — Idle timeouts, NAT or load balancer recycling, service restarts, half-open connections, and network switches can all break them. Applications need reasonable connection timeouts, health checks, reconnection, and request idempotency
+- **What are the core responsibilities of an RPC framework?** — Service addressing, serialization, transport, timeouts, cancellation, retries, load balancing, error mapping, and observability. Standard answers should be based on protocols and failure semantics, not bound to a single language framework
+- **How to design RPC timeouts and retries?** — Timeout budgets decrease along the call chain from the entry point and propagate cancellation; only safely replayable operations auto-retry, with limited counts, backoff, and jitter, preventing multi-layer retries from amplifying traffic
+- **How to choose serialization?** — Compare compatibility, schema evolution, encoding size, CPU cost, debuggability, and multi-language support. Do not decide a production protocol based on a single microbenchmark
+
+### Follow-Up Questions
+
+1. When a user sees 2 seconds of latency, how much is DNS, connection establishment, TLS, server processing, and response transfer respectively?
+2. After a request times out, can the server still succeed, and what side effects do client retries produce?
+3. What information can layer-4 and layer-7 load balancers each see, and how do health check failures affect connections?
+4. When protocol fields are deleted, renamed, or type-changed, how to ensure compatibility between old and new clients?
+5. How are network partitions and high latency mutually verified through traces, connection metrics, and packet capture?
+
+### Common Misconceptions
+
+- Conflating HTTP status codes, RPC business errors, and transport failures into one category
+- Auto-retrying all timeouts, ignoring non-idempotent writes and retry storms
+- Saying only "network jitter" with no DNS, handshake, retransmission, connection pool, or server-side evidence
+- Thinking that using long-lived connections eliminates connection establishment and recycling problems
+- Substituting a specific RPC framework's API names for the principles of timeouts, cancellation, serialization, and compatibility
+
+---
+
+## 5. Operating Systems
+
+### Basic Questions and Answer Points
+
+- **What is the difference between processes and threads?** — Processes provide resource and address space isolation; threads are execution and scheduling entities within a process and share most process resources. Specific scheduling and implementation details depend on the operating system and language runtime
+- **What are common inter-process communication methods?** — Pipes, message queues, shared memory, signals, sockets, and files. Selection should compare copy cost, synchronization method, cross-machine capability, permission boundaries, and failure handling
+- **What problem does virtual memory solve?** — It provides processes with independent contiguous address spaces, mapping physical memory or backing storage via page tables to achieve isolation, on-demand allocation, and sharing. A page fault does not necessarily mean swapping in from disk — it may be a first allocation or file mapping
+- **Why does switching between user mode and kernel mode have a cost?** — System calls, exceptions, or interrupts enter the kernel for handling, accompanied by context saving, privilege switching, and possible scheduling; the real cost must be measured — do not attribute all performance problems to "context switching"
+- **How to distinguish blocking I/O, non-blocking I/O, and I/O multiplexing?** — Blocking describes the call's waiting behavior; non-blocking calls return status immediately; multiplexing lets one execution thread wait on multiple descriptors becoming ready. After data is ready, actual reads/writes are usually still needed
+- **What page replacement algorithms exist?** — FIFO, LRU, LFU, Clock, etc. reflect different historical information and implementation costs; operating systems typically use approximate algorithms rather than maintaining strict LRU
+
+**Concurrency Models**
+
+- **What concurrency models exist beyond shared memory?** — Actors coordinate via isolated state and asynchronous messages; event loops use a few execution threads to handle large numbers of I/O events; message queues decouple production and consumption across processes. They reduce some shared-state contention but still require handling message ordering, backpressure, failure, and state consistency
+- **What does lock-free mean?** — The system as a whole can make progress within a bounded number of steps even if individual execution threads pause; often relies on atomic read-modify-write and retry. Lock-free does not mean wait-free, nor does it mean race-free or necessarily faster
+- **When to choose message passing over shared memory?** — When state is naturally partitionable, components need failure isolation, or cross-process scaling is required, message passing more easily establishes ownership boundaries; for low-latency shared data access or atomic updates across many objects, copying and protocol costs may be higher
+- **How to validate lock-free solutions?** — Beyond functional tests, check memory ordering, ABA, resource reclamation, starvation, and retry cost under high contention, using the target language's race detection, model checking, or stress testing tools to supplement evidence
+
+**General Deadlock**
+
+- **What are the four necessary conditions for deadlock?** — Mutual exclusion, hold and wait, no preemption, circular wait. This describes language-independent resource dependencies, not bound to any specific concurrency primitive
+- **How to prevent or avoid deadlock?** — Unify resource request order, acquire all at once, allow timeout and backoff, narrow the hold scope, or determine a safe state before resource allocation. Different strategies sacrifice concurrency, throughput, or implementation complexity
+- **How to detect deadlock?** — Establish resource hold-and-wait relationships among threads or transactions, detect cycles in the wait-for graph; collect blocking stacks, lock/transaction info, and scheduling state at multiple moments to distinguish deadlock, livelock, starvation, and ordinary long waits
+
+### Follow-Up Questions
+
+1. Why might throughput decrease as thread count increases, and how to distinguish scheduling, lock, and I/O waits?
+2. Why might RSS, virtual memory, anonymous pages, file pages, and language runtime statistics differ?
+3. What is the impact of a major page fault on tail latency, and how to prove it from system metrics?
+4. When a service appears "stuck", how to determine whether it is deadlock, livelock, resource exhaustion, or downstream waiting?
+5. After adopting lock-free structures, are there still concurrency problems, and how to evaluate starvation and retry overhead?
+6. In Actors or event loops without traditional mutexes, what logical deadlocks, mailbox backlogs, or blocking callback problems can still occur?
+
+### Common Misconceptions
+
+- Calling processes the sole unit of CPU scheduling, ignoring that modern systems primarily schedule threads or tasks
+- Equating large virtual memory directly with physical memory leak
+- Seeing a high context switch count and directly shrinking the thread pool, without analyzing workload and runnable/blocked states
+- Answering general deadlock questions by only reciting one language's lock implementation and tools
+- Assuming async I/O is inherently faster, ignoring load scale, batching, copying, and programming complexity
+
+---
+
+## 6. Distributed Systems
+
+### Basic Questions and Answer Points
+
+- **How should CAP be understood?** — When a network partition occurs, the system must trade off between maintaining consistency and continuing to provide available responses to some requests. CAP discusses behavior under partition conditions, not arbitrarily "picking two" in normal states
+- **What idea does BASE express?** — Trading system availability and scalability through basic availability, allowing intermediate states, and eventual consistency. Eventual consistency must define convergence conditions, maximum delay, conflict handling, and anomaly repair
+- **How do distributed consistency models differ?** — Linearizability, sequential consistency, causal consistency, session guarantees, and eventual consistency make different promises about operation visibility order. Businesses should choose from invariants and user experience — do not default to requiring the strongest consistency for all data
+- **How to choose a distributed lock?** — First determine whether database unique constraints, conditional updates, partition ownership, or idempotency can eliminate the lock. If a lock is truly needed, specify lease, renewal, failure model, and fencing token; the implementation can be based on databases, coordination services, or caches, but correctness cannot be judged by throughput alone
+- **What are the distributed ID solutions?** — UUIDs are decentralized but large and typically unordered; database sequences are simple but have a central dependency; segment allocation reduces central access; Snowflake-like schemes are high-throughput and trend-increasing, but require handling clock rollback, node IDs, and bit-width lifespan
+- **How to choose among 2PC, TCC, Saga, and Outbox?** — 2PC provides coordinated commit but has high blocking and availability costs; TCC requires business reservation, confirmation, and cancellation; Saga advances long transactions through multiple local transactions with compensation; Outbox solves local state and event publishing atomicity. The choice depends on consistency, invariants, participants, and compensation feasibility
+- **What problem does consistent hashing solve?** — Only a portion of keys migrates when nodes change; virtual nodes improve load distribution. It does not automatically solve hotspots, capacity differences, replica consistency, or failure recovery
+- **What are circuit breaking, isolation, and degradation respectively?** — Circuit breaking temporarily rejects calls after failures reach a threshold; isolation limits the resource pool or concurrency affected by failures; degradation sacrifices non-core capabilities to maintain the main path. All three require recovery probing and observability
+
+### Follow-Up Questions
+
+1. What invariants must the business truly maintain, and what are the visible consequences of weak consistency?
+2. During a network partition, which requests continue to be served, which are rejected, and how do clients perceive it?
+3. After a coordinator or participant crashes at each stage, how is the state recovered or manually repaired?
+4. When compensation operations fail, duplicate, or are out of order, how to ensure idempotency and continue converging?
+5. How do scaling, clock rollback, and cross-region latency affect IDs, locks, and data replication?
+
+### Common Misconceptions
+
+- Labeling Redis as AP and ZooKeeper as CP and ending the design there, without discussing specific operations and failure semantics
+- Explaining eventual consistency as "it will eventually be consistent", without retry limits, reconciliation, and manual repair
+- Introducing a distributed lock when the business could use a unique constraint, expanding the failure surface
+- Equating compensation with database rollback, ignoring that external side effects are usually irreversible
+- Using Snowflake-like IDs without a node ID conflict and clock rollback strategy
+
+---
+
+## 7. System Design
+
+### Basic Questions and Answer Points
+
+**Design Methods**
+
+- **How to start a system design question?** — First clarify functional scope, user and traffic scale, read/write ratio, data volume, latency and consistency goals; then estimate capacity, draw the main path and data model; finally discuss bottlenecks, failures, observability, and evolution
+- **How to choose between horizontal and vertical scaling?** — Vertical scaling is simple but limited by single-machine ceilings and failure domains; horizontal scaling increases total capacity and fault tolerance but introduces sharding, coordination, and consistency costs. Usually eliminate low-cost bottlenecks first, then scale along the growth path
+- **Where to put state?** — Service processes should be as stateless as possible for easy scaling; sessions, tasks, and business state go into storage with clear consistency and lifecycle. JWT is not "stateless" either — revocation, permission changes, and key rotation still need design
+
+**High-Frequency Scenarios**
+
+- **How to layer a flash-sale system?** — Front-cache static content; entry-point authentication, rate limiting, and duplicate prevention; atomic conditional updates on inventory to prevent overselling; async request smoothing for peaks; queryable order status; end-to-end idempotency, compensation, and reconciliation design
+- **How to design a URL shortener?** — Generate short codes via ID encoding or hashing, handle collisions and hotspots; store the long-short mapping with caching; choose redirect codes based on permanence and caching semantics; also consider abuse detection, expiration, and analytics
+- **How to handle consistency in read/write splitting?** — Reads default to replicas; read-after-write can temporarily read the primary, carry a version watermark, or wait for replicas to catch up; the strategy depends on the staleness window the business allows and primary capacity
+- **What are the general rate-limiting algorithms?** — Fixed window is simple but has boundary bursts; sliding window is smoother but costly in state; leaky bucket smooths output; token bucket allows controlled bursts. Implementation can be at the client, gateway, service, or shared storage — do not use a single language library as the standard answer
+- **How to determine rate-limit thresholds?** — Based on downstream safe capacity, SLO, concurrency model, and load test curves, with failure margin reserved. Distributed scenarios must define global or per-instance precision, clocks, state consistency, and failure degradation
+
+**Capacity and Reliability**
+
+- **What must capacity estimation at minimum include?** — Peak and average QPS, concurrency, request and response sizes, data growth, cache hit rates, network bandwidth, CPU/memory/disk, and replication and backup costs
+- **How to eliminate single points of failure?** — Multiple instances, multiple availability zones, replicas, and automatic failover are just the foundation; also verify whether the control plane, configuration, DNS, certificates, dependencies, and deployment system remain single points
+- **How to design degradation?** — Clarify core and non-core paths, set timeouts, caches, or default results for non-core features; degradation must be observable, recoverable, and avoid returning seemingly successful data that violates business constraints
+
+### Follow-Up Questions
+
+1. Where do the peak factors and growth assumptions in the estimation come from, and what are the most sensitive variables?
+2. When a single dependency slows down rather than fully failing, how do threads, connections, and queues get exhausted?
+3. Which requests does rate limiting reject, and will client retries further amplify traffic?
+4. When caches, databases, and message systems each fail, to what extent can core business be maintained?
+5. When evolving from single-region to multi-region, how do consistency, routing, data sovereignty, and cost change?
+
+### Common Misconceptions
+
+- Stacking caches, sharding, and message queues without clarifying scale first
+- Drawing only the normal path, without explaining timeouts, retries, idempotency, degradation, recovery, and data repair
+- Reciting rate-limiting algorithms completely, but with no threshold source, scope, or client behavior after rejection
+- Substituting specific framework component names for protocols, data flows, and failure models
+- Interpreting "stateless service" as the entire system being stateless
+
+---
+
+## 8. Performance Analysis and Troubleshooting
+
+### Basic Questions and Answer Points
+
+- **What is the first step in performance optimization?** — Clarify user-visible goals and baselines, such as throughput, p50/p95/p99 latency, error rates, resource cost, and data scale; first reproduce and locate the bottleneck, then form hypotheses — do not start from tools or parameters
+- **What do the USE and RED methods each look at?** — USE looks at utilization, saturation, and errors for each resource; RED looks at request rate, errors, and duration for each service. Combined, they can drill from service symptoms down to resource causes
+- **How to analyze high CPU?** — Confirm quotas and load changes, distinguish user/system/iowait/steal, locate the process and execution threads, then use sampling profilers, call stacks, and business metrics to verify hotspots
+- **How to analyze memory problems?** — Distinguish language heap, native memory, file pages, mappings, thread stacks, and kernel resources; observe allocation rate, surviving set after collection, RSS, and OOM events; analyze heap/core dumps when necessary
+- **How to analyze slow I/O and databases?** — Look at queue depth, throughput, latency, IOPS, and saturation, and correlate with queries, lock waits, cache hits, and network. High disk utilization alone is not the root cause
+- **What is the evidence chain for production incidents?** — Timeline, user symptoms, change records, metrics, logs, traces, profiles/dumps, and dependency status should corroborate each other. Stop the bleeding first, then locate; evaluate production risk before all high-overhead diagnostics
+- **How to validate optimization?** — Under comparable traffic and data, do baselines, single-variable experiments, and load tests, checking benefits, error rates, and resource cost; validate production effects via canary releases, and define rollback thresholds in advance
+
+### Follow-Up Questions
+
+1. Which metrics can the current conclusion explain, and which metrics contradict it?
+2. If removing the recent change still doesn't recover, what is the next falsifiable hypothesis?
+3. What are the overhead and safety boundaries of profiling, packet capture, or dumps?
+4. Average latency decreased but p99 and error rates increased — is that a successful optimization?
+5. After incident recovery, how to backfill monitoring, drills, capacity, and automated defenses?
+
+### Common Misconceptions
+
+- Scaling up on seeing high CPU or memory without proving a causal relationship to user symptoms
+- Looking only at averages, masking tail latency, hot instances, and a few severe errors
+- Modifying thread counts, GC, connection pools, or timeouts first, then looking for a baseline
+- Treating correlation as causation, ignoring simultaneous releases, traffic, and downstream changes
+- Only verbally saying "load testing was effective" without recording datasets, environments, commands, metrics, and control results
+
+---
+
+## 9. Engineering Practices
+
+### Basic Questions and Answer Points
+
+- **What are the basic requirements of API design?** — Clear resource and action semantics, Schema for inputs and outputs, stable error model, explicit authentication and idempotency, controlled pagination and batch boundaries, and compatible evolution rules
+- **How to implement idempotency?** — Reads are naturally idempotent; writes can use idempotency keys, unique constraints, conditional updates, or state machines. Must define the scope, TTL, concurrency contention, and response replay of idempotency records
+- **How to layer tests?** — Unit tests verify pure logic and boundaries; integration tests verify databases, messages, caches, and external protocols; contract tests protect service interfaces; a small number of end-to-end tests cover critical user paths
+- **How to safely release database changes?** — Use backward-compatible expand-and-contract: add new structures first with dual reads/dual writes or backfill, then cut traffic, finally remove old structures; large-table DDL requires evaluating locks, replication latency, and rollback
+- **How to manage configuration and secrets?** — Separate configuration from artifacts; sensitive values go into a secret system, not into code, logs, or repositories; configuration has type validation, auditing, canary, and rollback
+- **What should observability cover?** — Metrics answer "is it abnormal", logs provide discrete event context, traces show cross-service causal paths; unify request/trace IDs, and control sensitive information, sampling, and cardinality
+- **How to choose a release strategy?** — Rolling release is low-cost; blue-green allows fast switching but has high resource cost; canary validates small traffic first. All require compatibility between old and new versions and defined auto-stop and rollback metrics
+- **What does code review focus on?** — Correctness, boundaries, failure semantics, security, concurrency, data migration, observability, and test evidence take priority over formatting; review conclusions should point to code, protocol, or runtime evidence
+
+### Follow-Up Questions
+
+1. When a client times out and retries, how do write APIs avoid duplicate side effects?
+2. When old and new service versions run simultaneously, how do APIs, messages, and database schemas stay compatible?
+3. After unit tests pass, which real boundaries must still be verified through integration or contract tests?
+4. During canary, which metrics trigger auto-stop, and how to roll back after data has been written?
+5. How can logs and traces support troubleshooting while avoiding leaking credentials and user privacy?
+
+### Common Misconceptions
+
+- Treating the HTTP `PUT` or `POST` method itself as an idempotency guarantee
+- Having many tests but mocking out databases, transactions, and message boundaries
+- Deleting old fields first then upgrading all consumers, causing irreversible compatibility failures
+- Only logging strings with no stable fields, correlation IDs, levels, or sampling strategy
+- Judging release success only by process liveness, not business errors, latency, data consistency, and user metrics

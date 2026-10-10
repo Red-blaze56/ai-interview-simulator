@@ -1,0 +1,346 @@
+# General AI Application Development Knowledge Base (Optional Extension)
+
+> This file is an **optional reference**. When a candidate expresses interest or experience in AI application development (e.g., has done RAG projects, used Agent frameworks, developed MCP Servers, etc.), the interviewer can select topics from this knowledge base as an extension for framework depth or engineering modules.
+>
+> Coverage areas: LLM fundamentals, Agents, RAG, MCP protocol, AI programming practice, AI system design, and language-independent AI-assisted backend development practices.
+
+---
+
+## Table of Contents
+
+- [1. LLM Fundamentals](#1-llm-fundamentals)
+  - [1.1 Tokens and Context Window](#11-tokens-and-context-window)
+  - [1.2 Temperature and Sampling Parameters](#12-temperature-and-sampling-parameters)
+  - [1.3 Model Capabilities and Limitations](#13-model-capabilities-and-limitations)
+- [2. AI Agents](#2-ai-agents)
+  - [2.1 Agent Core Concepts](#21-agent-core-concepts)
+  - [2.2 ReAct and Reasoning Paradigms](#22-react-and-reasoning-paradigms)
+  - [2.3 Context Engineering](#23-context-engineering)
+  - [2.4 Multi-Agent Systems](#24-multi-agent-systems)
+- [3. RAG Retrieval-Augmented Generation](#3-rag-retrieval-augmented-generation)
+  - [3.1 RAG Core Principles](#31-rag-core-principles)
+  - [3.2 Document Chunking Strategies](#32-document-chunking-strategies)
+  - [3.3 Vector Retrieval and Indexing](#33-vector-retrieval-and-indexing)
+  - [3.4 Recall Quality Optimization](#34-recall-quality-optimization)
+- [4. MCP Protocol and Tool Calling](#4-mcp-protocol-and-tool-calling)
+  - [4.1 Function Calling](#41-function-calling)
+  - [4.2 MCP Protocol](#42-mcp-protocol)
+  - [4.3 Tool Registration and Security](#43-tool-registration-and-security)
+- [5. AI Programming Practice](#5-ai-programming-practice)
+  - [5.1 AI Programming Tool Usage](#51-ai-programming-tool-usage)
+  - [5.2 AI-Assisted Programming Best Practices](#52-ai-assisted-programming-best-practices)
+  - [5.3 AI Coding Agent Architecture (Claude Code / Cursor)](#53-ai-coding-agent-architectureclaude-code--cursor)
+  - [5.4 Skill Mechanism and AI Workflow Orchestration](#54-skill-mechanism-and-ai-workflow-orchestration)
+  - [5.5 Prompt Cache and Performance Optimization](#55-prompt-cache-and-performance-optimization)
+- [6. AI System Design High-Frequency Scenarios](#6-ai-system-design-high-frequency-scenarios)
+  - [6.1 Customer Service Agent Design](#61-customer-service-agent-design)
+  - [6.2 Knowledge Base Q&A System](#62-knowledge-base-qa-system)
+  - [6.3 Multimodal Document Processing Service](#63-multimodal-document-processing-service)
+- [AI-Assisted Backend Development General Practices](#ai-assisted-backend-development-general-practices)
+  - [Tasks Suitable and Unsuitable for AI Assistance](#tasks-suitable-and-unsuitable-for-ai-assistance)
+  - [Evidence Boundaries for AI Code Review](#evidence-boundaries-for-ai-code-review)
+  - [Validation Requirements in Database and API Design](#validation-requirements-in-database-and-api-design)
+
+---
+
+## 1. LLM Fundamentals
+
+### 1.1 Tokens and Context Window
+
+- **What is a Token? How is it calculated?** — A Token is the smallest unit of text processing. English: 1 Token ≈ 4 characters or 0.75 words; Chinese: 1 Token ≈ 1–2 Chinese characters. The GPT series uses a BPE (Byte Pair Encoding) tokenizer, and Chinese Token consumption is typically higher than English
+- **What is a Context Window?** — The maximum number of Tokens a model can process at once, including input and output. Content exceeding this length will be truncated (Truncation)
+- **What happens when the context window is full?** — Solutions: Sliding Window to truncate history; Summarization to condense; Hierarchical Memory; RAG to retrieve relevant segments in place of full history
+- **Why does Chinese consume more Tokens than English?** — BPE tokenizers have varying efficiency across languages; Chinese characters have lower recurrence rates in training corpora, leading to finer tokenization granularity; Chinese lacks space delimiters, requiring more Tokens to represent the same semantics
+
+### 1.2 Temperature and Sampling Parameters
+
+- **What is Temperature? How does it affect output?** — Temperature controls the randomness of output. Temperature=0: almost always selects the highest-probability word (deterministic); Temperature=1: probability distribution remains at its original state; Temperature>1: more likely to select low-probability words (more random, more creative)
+- **What Temperature for what scenario?** — 0: code generation, structured output, translation (deterministic); 0.3–0.7: conversation, summarization (balanced); 1.0+: creative writing, brainstorming (diversity)
+- **What is the difference between Top-p and Top-k sampling?** — Top-k: only samples from the k highest-probability words; Top-p: samples from the smallest set of words whose cumulative probability reaches p. Top-p is more commonly used and can dynamically adjust the number of candidate words
+- **Why do you still need to specify Temperature for structured output (JSON Mode)?** — Even with a JSON format specified, the model still needs to choose among multiple valid options; Temperature controls the randomness of this choice; Temperature=0 improves format stability but cannot fully guarantee it
+
+### 1.3 Model Capabilities and Limitations
+
+- **What is hallucination? Why does it occur?** — Hallucination refers to the model generating content that appears plausible but is actually incorrect or nonexistent. Root causes: LLMs are language models, not knowledge databases; training data contains errors or biases; there is no real-time verification mechanism; attention mechanisms "find" connections in patterns that don't exist
+- **How to mitigate hallucination?** — RAG (Retrieval-Augmented Generation); prompt constraints (requiring citations); CoT (Chain-of-Thought) to make reasoning transparent; tool invocation to verify external knowledge; fact-checking layers
+- **What is the LLM "amnesia" problem?** — Context length limits cause early information to be truncated in long conversations; positional encoding decay causes the model to pay the least attention to information in the middle of the context (Lost in the Middle); long-term memory beyond the fixed context window requires external storage
+- **What new problems do long-context models (e.g., 100K+ Tokens) introduce?** — Computation cost grows quadratically; attention dilution (difficulty pinpointing key information in ultra-long contexts); truncation risk still exists; high inference latency
+
+---
+
+## 2. AI Agents
+
+### 2.1 Agent Core Concepts
+
+- **What is an AI Agent? What is the core formula?** — Agent = LLM + Planning + Memory + Tools. An autonomous software system that can perceive its environment, make decisions, and execute actions, using an LLM as its brain to accomplish complex tasks
+- **What is the Agent Loop? What is the workflow?** — Essentially a while loop: LLM reasoning → tool invocation → context update → repeat, until task termination. Key components: System Prompt, available tool list, historical context, termination conditions
+- **What is the essential difference between Agent vs Workflow vs traditional programming?** — In traditional programming and workflows, humans make decisions; in Agents, AI makes decisions. Key differences lie in flexibility, barriers to entry, and maintenance cost
+- **What are the current core challenges of Agents?** — Context window limitations; hallucination; token economics (high cost for long tasks); tool security boundaries (Prompt Injection); planning capability ceiling; insufficient observability
+
+### 2.2 ReAct and Reasoning Paradigms
+
+- **What is ReAct? What is its core idea?** — ReAct (Reasoning + Acting) combines chain-of-thought reasoning with external environment interaction, letting AI "take one step and look one step," completing tasks through a "think → act → observe" loop, significantly reducing hallucination and improving interpretability
+- **What is the difference between ReAct and Plan-and-Execute?** — ReAct: dynamic step-by-step planning, adjusting each step based on the previous observation; Plan-and-Execute: first formulates a global plan, then executes step by step. ReAct is more flexible but context grows continuously; Plan-and-Execute is more controllable but lacks dynamic adjustment
+- **What is the Reflection pattern?** — Gives Agents self-correction ability by reinforcing model behavior through natural language feedback. Includes Reflexion (reflecting after failure), Self-Refine (critique and improve after output), and CRITIC (external tool verification)
+- **What is a Multi-Agent system?** — Multiple independent Agents collaborating to complete complex tasks. Mainstream architectures: Orchestrator-Subagent; Peer-to-Peer. Advantages: high parallel efficiency, specialized division of labor; disadvantages: high communication overhead, complex debugging
+
+### 2.3 Context Engineering
+
+- **What is Context Engineering?** — The technique of building a high signal-to-noise input environment for LLMs. The core goal is to increase and maximize the ratio of effective information to noise within a limited Token window, so the model has the accurate context needed for the current decision
+- **How to design a System Prompt most effectively?** — Highly structured Markdown format: role setting, core objectives, strict constraints, standard execution flow, output format. Use delimiters to distinguish untrusted external data
+- **Short-term memory vs long-term memory?** — Short-term memory: current session context, managed via sliding window; long-term memory: external knowledge base (vector database or knowledge graph), injected via retrieval
+- **How to optimize when context is too long?** — Low priority (compressible): early conversation history compressed into summaries; Medium priority (trimmable): RAG-retrieved materials secondary trimming; High priority (absolutely protected): system constraints and core tool descriptions must not be lost; Context Caching to reduce concurrency cost
+
+### 2.4 Multi-Agent Systems
+
+- **What is the A2A protocol? What problem does it solve?** — Agent-to-Agent communication protocol, specifically designed for efficient collaboration between AI agents. Uses structured JSON (TaskID, Dependencies, AcceptanceCriteria) instead of natural language to reduce token consumption and avoid format parsing errors
+- **What are Agentic Workflows?** — A macro concept advocated by Andrew Ng, with four core design patterns: Reflection, Tool Use, Planning, and Multi-agent Collaboration
+- **What is the relationship between MCP and A2A?** — MCP is the communication protocol between AI and external tools (analogous to REST/gRPC for microservices); A2A is the communication protocol between Agent and Agent (analogous to message queues between microservices)
+
+---
+
+## 3. RAG Retrieval-Augmented Generation
+
+### 3.1 RAG Core Principles
+
+- **What is RAG? What problem does it solve?** — Retrieval-Augmented Generation. Solves LLM knowledge staleness, hallucination, and knowledge cutoff issues by retrieving from an external knowledge base to provide the LLM with the most up-to-date and accurate context
+- **What is the complete RAG workflow?** — Indexing phase: document loading → text splitting (Chunking) → vectorization → store in vector database; Query phase: user question vectorized → Top-K retrieval → context assembly → LLM generation
+- **What is the difference between RAG vs Fine-tuning? What scenarios suit each?** — RAG: dynamic knowledge, frequent updates, needs interpretability, reduces cost; Fine-tuning: fixed patterns, style learning, low real-time requirements, complex reasoning adjustment. The two can be combined
+- **What are the core limitations of RAG?** — Retrieval quality depends on Chunking strategy and vector model effectiveness; context length limits prevent introducing all relevant documents; multi-hop reasoning is difficult; cross-language retrieval performs poorly
+
+### 3.2 Document Chunking Strategies
+
+- **How to choose Chunk Size?** — Fixed chunking: simple but average results (typically 512–1024 Tokens); Sentence/paragraph chunking: respects semantic integrity; Recursive character chunking: splits by hierarchy (paragraph → sentence → word); Semantic chunking: automatically determines split points based on Embeddings
+- **What problems arise when Chunk Size is too large or too small?** — Too large: introduces too much irrelevant context, dilutes key information, increases token cost and inference latency; Too small: loses cross-chunk semantics, fragments context, retrieval segments become incomplete
+- **What is the purpose of overlapping chunks (Overlap)?** — Retains overlapping content between adjacent chunks to prevent semantics from breaking at split points. Commonly overlap=10–20%, but increases token consumption
+- **How to adjust chunking strategy for different document types?** — Structured documents (PDF/HTML): first identify heading hierarchy, chunk by hierarchy; Code: chunk by function/class, preserving indentation and context; Conversation records: chunk by turn
+
+### 3.3 Vector Retrieval and Indexing
+
+- **What are common vector index algorithms?** — FLAT (brute-force search, accurate but slow), IVF (inverted index, clustering acceleration), HNSW (Hierarchical Navigable Small World graph, high recall with low latency), PQ (Product Quantization, compressed storage)
+- **What is the principle of HNSW? Advantages and disadvantages?** — Hierarchical graph structure, searched from top to bottom layer by layer; upper layers do long-distance navigation, lower layers do fine-grained search. Advantage: approximate nearest neighbor queries typically achieve a good balance of recall and latency, and support incremental insertion; cost: graph structure has high memory usage, and construction and parameter tuning have costs. Deletion, in-place updates, concurrent writes, and index compression capabilities depend on the specific vector database implementation and cannot be asserted uniformly by algorithm name alone
+- **Cosine similarity vs dot product vs Euclidean distance?** — Cosine similarity: measures direction, unaffected by vector length, suitable for text Embeddings; Dot product: considers both direction and magnitude, suitable for normalized vectors; Euclidean distance: measures absolute distance, suitable for dense features like images
+- **How to choose a vector database?** — Milvus (large-scale, high-performance, supports hybrid search), Pinecone (easy hosting, Serverless), Chroma (lightweight, local development), Qdrant (filtering support, good performance), Weaviate (native hybrid search support)
+
+### 3.4 Recall Quality Optimization
+
+- **How to diagnose and optimize low recall?** — Check whether the vector model matches the document domain; adjust Chunk Size; increase Overlap; optimize retrieval strategy (hybrid retrieval: vector + keyword); use re-ranking (Re-ranker)
+- **What is the role of a Re-ranker?** — Two-stage retrieval: coarse recall (vector retrieval, large Top-K) → precision ranking (Cross-Encoder re-ranking, small Top-N output). Cross-Encoder can consider finer-grained semantic matching, compensating for the precision loss of vector retrieval
+- **What is hybrid retrieval?** — Combines vector retrieval (semantic similarity) and keyword retrieval (BM25/TF-IDF). Suitable for scenarios requiring both semantic understanding and exact keyword matching. Common approach: Reciprocal Rank Fusion (RRF) to merge multi-path results
+- **How to handle cross-language retrieval?** — Use multilingual Embedding models (e.g., sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2); translate queries or documents; use CLUE (Cross-Lingual Understanding) specialized models
+- **How to determine whether poor RAG system performance is a retrieval problem or a generation problem?** — First check whether the retrieved segments contain evidence supporting the target answer: if not, prioritize investigating indexing, chunking, query rewriting, recall, and ranking; if they do, continue to confirm whether this evidence was correctly trimmed and assembled into the model context. When evidence has entered the context but generation does not use it, then investigate prompt constraints, context position, model capability, and generation strategy. You can feed manually constructed "perfect retrieval results" directly into the generation stage for isolation experiments, comparing retrieval, context assembly, and generation at each stage — and cannot assert that retrieval is not the problem merely because the answer does not cite the retrieved segments
+
+### 3.5 RAG Optimization Validation and Metrics (Important Follow-Up Chain)
+
+> When a candidate mentions RAG optimization (chunk reranking, rewriting, hybrid retrieval, etc.), you must ask continuous follow-up questions to verify, avoiding "piling on techniques" without knowing the effects.
+
+**Follow-up chain (must ask consecutively):**
+
+1. **Layer 1: How did you validate it?**
+   - Expected answer: Has a human evaluation dataset, compared against a baseline, etc.
+   - If they only say "it felt better" → continue asking
+
+2. **Layer 2: What are the quantitative metrics? How much did they improve?**
+   - Expected answer: Recall@K, MRR, RAGAS, Faithfulness, etc.
+   - If they cannot give specific numbers → continue asking
+
+3. **Layer 3: How was the comparison experiment done? Were there ablation studies?**
+   - Expected answer: Step-by-step removal of each optimization to see effect changes
+   - Example: How much did removing the Re-ranker degrade performance? What about removing hybrid retrieval?
+
+4. **Layer 4: What is the data distribution and query difficulty?**
+   - Expected answer: Describe document count and length, chunk count, topic similarity, query ambiguity, multi-hop requirements, timeliness, and evaluation set coverage
+   - Scale is only one variable; even with few documents, long documents, high-similarity content, or complex queries can cause retrieval difficulties — you must prove with failure samples and evaluation metrics
+
+**Common incorrect answer patterns (the interviewer should challenge):**
+- ❌ "It felt better" → Feeling is not a metric
+- ❌ "I used commonly used community methods" → Common does not mean effective
+- ❌ "Many/few documents, so it must be difficult/easy" → Quantity cannot substitute for document length, similarity, query distribution, and evaluation set evidence
+- ❌ "Adding a Re-ranker improved results" → Were there ablation experiments? How much specifically?
+
+**Correct approach (guide the candidate's thinking):**
+- ✅ Establish metrics first, then optimize
+- ✅ Verify each optimization individually, avoid piling on
+- ✅ Record scale, document length and similarity, query difficulty, failure types, and evaluation set coverage simultaneously — avoid judging by a single threshold
+- ✅ Dual validation with offline metrics + online user feedback
+
+---
+
+## 4. MCP Protocol and Tool Calling
+
+### 4.1 Function Calling
+
+- **What is Function Calling? What is the underlying principle?** — The capability that allows LLMs to call external tools/functions. The model outputs a structured function call request (not natural language), which the application parses and executes, then returns results. Underlying dependency: JSON Schema to describe function signatures
+- **How to write a good tool description (Function Description)?** — Must clearly state "when to call it" and "when not to call it"; parameter descriptions include format requirements and typical example values; description quality directly determines Agent decision accuracy
+- **What are the limitations of Function Calling?** — Depends on whether the model supports the capability; parameter filling may still be incorrect; ordering dependencies in multi-function calls are difficult to handle; high latency in scenarios requiring real-time performance
+- **What is the difference between Function Calling vs Agent Skills?** — Function Calling: invokes external API/code, the model only sees the JSON Schema signature; Agent Skills: primarily natural language instruction sets, the model can see the complete execution logic (SKILL.md), more flexible
+
+### 4.2 MCP Protocol
+
+- **What is MCP? Why is it called "the USB-C of AI"?** — Model Context Protocol, an open protocol launched by Anthropic in November 2024. Unifies communication standards between AI applications and external tools, enabling one-time integration with global reuse, likened to a USB-C interface
+- **What are MCP's three core primitives?** — Tools (executable functions, for LLM to actively call), Resources (read-only data, for Agent to read on demand), Prompts (reusable prompt templates)
+- **How to develop an MCP Server?** → Define tool JSON Schema → implement tool execution logic → expose as Server via MCP SDK → host program automatically discovers tools upon connection. Mainstream languages all have SDK support
+- **What is the relationship between MCP and Function Calling?** — JSON Schema is the underlying data format standard (defines how the model "reads" tools); MCP is the communication protocol layer on top of it (defines how tools "standardized-integrate" with host programs). The two are orthogonal and can be used together
+
+### 4.3 Tool Registration and Security
+
+- **What is Prompt Injection? How to defend against it?** — Attackers attempt to override or tamper with the Agent's system instructions through crafted external input. Defenses: execution layer (sandbox isolation, least-privilege); cognitive layer (prompt isolation, delimiters); decision layer (human approval for high-risk operations)
+- **What are best practices for tool registration?** — Avoid tool hallucination: descriptions must be accurate and unambiguous; dynamic registration: load on demand rather than exposing all tools at once; version management: tool signature changes require synchronized description updates
+- **How to evaluate tool calling quality?** — Tool selection accuracy (was the correct tool called); parameter filling correctness (are parameter values correct); invocation success rate (did execution succeed); end-to-end task completion rate
+
+---
+
+## 5. AI Programming Practice
+
+### 5.1 AI Programming Tool Usage
+
+- **Which AI programming tools have you used?** — Examines the candidate's practical experience with AI programming tools. Mainstream tools: GitHub Copilot, Cursor, Windsurf, Trae, Claude Code, etc.
+- **What are the core principles of AI programming tools?** — Context-aware code completion (based on current file, adjacent files, symbols, and comments); natural language to code; code review and optimization suggestions; reading build, test, and run evidence through tools
+- **How to write a good AI programming prompt?** — Specify tasks clearly rather than vague descriptions; provide context (file paths, related code, error messages); specify output format; guide step by step rather than all at once; use code templates to reduce hallucination
+- **What are the limitations of AI programming?** — Insufficient understanding of complex business logic; tends to produce code that looks correct but has bugs; lacks understanding of runtime behavior; difficult context management in long conversations
+
+### 5.2 AI-Assisted Programming Best Practices
+
+- **Where are the detailed practices?** — See "AI-Assisted Backend Development General Practices" in this document, which maintains the single complete set of rules for task adaptation, code review evidence, and database and API validation
+- **How to assess this section?** — First ask the candidate to describe their tool workflow, then follow up on how they convert AI output into compilation, testing, schema, runtime metrics, or human approval evidence; do not repeat reciting task lists
+- **What are the future trends in AI programming?** — Agentic execution, repository-level context, stricter permission isolation, and incorporating compilation, tests, runtime metrics, and human approval into the verification loop
+
+### 5.3 AI Coding Agent Architecture (Claude Code / Cursor)
+
+> High-frequency interview topic: the interviewer may directly ask "Do you know the source code of Claude Code / Cursor? Any modules you understand in particular?"
+
+- **What is the core architecture of an AI Coding Agent?** — Essentially an Agent Loop (while loop): read user input → assemble context (System Prompt + conversation history + tool definitions) → call LLM → parse response → if it contains tool calls, execute tools and append results to context → loop, until the model outputs plain text (no more tool calls). Claude Code, Cursor Agent, and Copilot Workspace all use this pattern under the hood
+- **What are the key components of the Agent Loop?** — (1) System Prompt: defines role, constraints, available tool list; (2) Message History: a sequence of messages in user/assistant/tool roles; (3) Tool Registry: describes tool signatures via JSON Schema, injected into the system prompt or tools parameter; (4) Tool Executor: parses the model's tool call output → routes to the corresponding implementation → executes → returns results; (5) Termination conditions: model no longer initiates tool calls / maximum rounds reached / user interrupt
+- **What tools does Claude Code have? How do they work?** — Core tools include: Read (read files), Edit (edit files), Write (write files), Bash (execute commands), Glob (file search), Grep (content search), Agent (sub-agent), etc. Each tool defines parameters via JSON Schema; during reasoning, the model decides which tool to call and what parameters to pass. Tool execution results are appended to the conversation history as tool role messages; the model sees the results during the next round of reasoning and decides the next step
+- **How is context management done?** — The longer the conversation, the more context Tokens. Core strategies: (1) Context compression/truncation: when approaching the context window limit, compress early conversation into summaries; (2) Priority-based protection: System Prompt and the most recent conversation rounds are always retained; intermediate history messages are compressed first; (3) Tool result trimming: large file read results may be truncated, keeping only key parts
+- **How is the permission and security model designed?** — Tool calls are divided into auto-allowed and user-confirmation-required categories. Read operations (Read, Glob, Grep) are typically auto-allowed; write operations (Edit, Write, Bash) require user confirmation or are auto-allowed under specific permission modes. Preventing Prompt Injection: external data returned by tools is marked as untrusted to avoid overriding system instructions
+- **What is the sub-agent mechanism?** — Claude Code's Agent tool can launch an independent sub-agent with its own context window. Use cases: (1) Isolate large search results to avoid polluting the main context; (2) Execute independent tasks in parallel; (3) Delegate complex research tasks to a sub-agent, retrieving only conclusions. The sub-agent returns results to the main agent upon completion, and the main agent continues reasoning based on the results
+
+### 5.4 Skill Mechanism and AI Workflow Orchestration
+
+> High-frequency interview topic: the interviewer may ask "How does Skill work in Claude Code?" "How are your Skill workflows connected?"
+
+- **What is a Skill? How does it differ from MCP / Function Calling?** — A Skill is a reusable capability module written in natural language (Markdown). Difference from Function Calling: Function Calling defines parameters via JSON Schema and executes via code; Skill defines complete execution instructions in a SKILL.md file, which the LLM reads and follows. Skill is more flexible, suited for complex workflow orchestration; Function Calling is more precise, suited for single tool invocations
+- **How does Skill load in Claude Code?** — Two-phase loading: (1) Lightweight injection: each Skill's name + description (a few dozen Tokens) is always injected into the system prompt, so the LLM can "see" summaries of all available Skills; (2) On-demand activation: when a user request matches a Skill's description, the LLM decides to activate that Skill, and the full SKILL.md content is loaded into context. This design balances context consumption and capability coverage
+- **Why is a Skill's description so important?** — The description is the only basis on which the LLM decides "whether to activate this Skill." Too vague → fails to activate when it should; too broad → triggers incorrectly when it shouldn't. A good description should include: trigger conditions (TRIGGER when), non-trigger conditions (DO NOT TRIGGER when), and core capability description
+- **How to design a multi-Skill collaborative workflow?** — Main Skill + Sub-Skill pattern: the Main Skill (SKILL.md) defines the overall workflow steps (step 1 does what → step 2 does what → exception handling), while Sub-Skills handle independent capabilities (fetching cookies, Git operations, code analysis, etc.). The Main Skill tells the LLM via natural language instructions when to invoke which Sub-Skill. Analogous to the Orchestrator Pattern in software engineering
+- **What scenarios suit Skill vs MCP Server?** — Skill suits: complex workflow orchestration, tasks requiring LLM judgment and decision-making, workflows needing flexible adjustment; MCP Server suits: deterministic tool calls, API wrappers requiring precise parameter passing, standardized capabilities needing reuse across multiple AI clients. The two can be combined: Skill orchestrates the workflow, and the workflow invokes tools provided by MCP Servers
+
+### 5.5 Prompt Cache and Performance Optimization
+
+> High-frequency interview topic: understanding AI application performance optimization and cost control
+
+- **What is Prompt Cache? What is the principle?** — Anthropic's Prompt Cache mechanism: when multiple API calls share the same prompt prefix, subsequent calls can reuse the prefix's computed results (KV Cache), reducing time to first token (TTFT) and computation cost. Cache is strictly matched by prompt prefix — as long as the prefix is the same, appending content afterward does not affect cache hits
+- **What is the TTL of Prompt Cache? What impact does it have?** — The cache has a 5-minute TTL (Time To Live). If unused for more than 5 minutes it expires, and the next call requires recomputation. For AI Coding Agents: tool calls in the Agent Loop are typically spaced seconds apart, resulting in high cache hit rates; but if the user is idle for a long time, the cache will expire
+- **How to design prompt structure to maximize cache hits?** — Put stable content first and variable content last. System Prompt (stable) → tool definitions (stable) → early conversation history (relatively stable) → recent conversation (variable). This way the prefix is as long and stable as possible, achieving the highest cache hit rate
+- **What is the impact of Prompt Cache on cost?** — Tokens that hit the cache are charged at 1/10 the price (using Claude as an example), significantly reducing costs in high-frequency call scenarios. But when the cache misses, the cost remains unchanged. For Agent scenarios, a single task may have dozens of rounds of tool calls, making cache optimization effects very significant
+
+---
+
+## 6. AI System Design High-Frequency Scenarios
+
+### 6.1 Customer Service Agent Design
+
+- **Overall architecture?** — User request → Intent Detection → Routing → Sub-Agent/skill processing → Response generation. Key components: dialogue management, intent recognition, knowledge base retrieval, sentiment detection
+- **How to do intent recognition?** — Options: keyword matching (simple scenarios), classification models (fixed intent sets), LLM zero-shot classification (open intents), hybrid approach (rules first, then model)
+- **How to handle unanswerable questions?** — Escalate to human strategy (triggered when confidence is below threshold); multi-turn clarification (ask follow-up questions to gather more information); FAQ fallback responses; escalation mechanism (regular agent → expert)
+- **Dialogue state management?** — Short-term state (current session): Slot Filling; Long-term state (cross-session): user profiles, preference records, historical issues. Technology selection: in-memory (Redis) / database
+
+### 6.2 Knowledge Base Q&A System
+
+- **How to design an enterprise knowledge base Q&A system?** — Data layer: multi-source document ingestion (Notion/Confluence/API) → document parsing → Chunking → vectorization → indexing; Retrieval layer: query parsing → hybrid retrieval → re-ranking → context assembly; Application layer: LLM generation → answer validation → citation traceability
+- **How to do multi-hop reasoning?** — Iterative retrieval (retrieve one fact at a time, gradually building the answer); chain-of-thought reasoning (making the model reason explicitly); graph structure (building a document relationship graph, using GNN or path reasoning)
+- **How to handle non-text content like tables and charts?** — Tables: convert to Markdown or JSON structured representation; Charts: alt text description extraction or vision model description; PDF: layout analysis to identify heading/body/chart regions
+- **How to evaluate RAG system effectiveness?** — Retrieval metrics: Recall@K, MRR, NDCG; Generation metrics: RAGAS (comprehensive evaluation), faithfulness (whether it relies on retrieved content), answer relevancy; Human evaluation: accuracy, completeness, fluency
+
+### 6.3 Multimodal Document Processing Service
+
+- **Why do backends need multimodal processing?** — Contracts, receipts, tables, scanned PDFs, and images may contain text, layout, and visual relationships simultaneously. The server typically first performs file type validation, malicious content isolation, OCR/layout analysis, then passes controlled segments to a vision model — arbitrary raw files cannot be injected directly into model context
+- **How to design the processing pipeline?** — The upload service generates unguessable object identifiers; asynchronous tasks perform decoding, page-level splitting, OCR/vision extraction, and structured validation; results with source page numbers and model versions are written to storage; failed tasks enter bounded retry or human review, not infinite replay
+- **How to control cost and latency?** — Set budgets by page count, pixel count, file size, and tenant; prefer text layer and OCR first, only calling vision models for regions requiring visual relationships; caches must be bound to input hash, model version, and extraction configuration
+- **How to validate quality?** — Use de-annotated labeled sets to evaluate field accuracy, table structure, citation page numbers, and rejection rates separately; monitor queue backlog, per-page cost, timeouts, human correction rates, and model version regressions in production — do not just show a few successful examples
+- **What are the security boundaries?** — Both files and model outputs are treated as untrusted input; when executing parsers, isolate permissions and resources, limit file types and decompression size, remove sensitive information from metadata, and provide human approval and audit records for high-risk fields
+
+---
+
+## AI-Assisted Backend Development General Practices
+
+> This section only maintains cross-language methodology. For Spring Boot, Java concurrency, JVM, and Java testing tool specifics, see `java-ai-dev-tools-knowledge-base.md`; for standard answers on databases, APIs, caching, and engineering principles, see `common-backend-knowledge-base.md`.
+
+### Tasks Suitable and Unsuitable for AI Assistance
+
+**Tasks suitable for AI assistance, but still requiring validation:**
+
+- **Mechanical transformation** — DTOs, schemas, serialization structures, test data, and repetitive boilerplate code. The precondition is that input/output contracts are clear, and acceptance is done via compilation, static checks, or schema validation results
+- **Local refactoring** — Extract methods, split responsibilities, naming improvements, and deduplication. Must be protected by behavioral tests; "the code is shorter" cannot be treated as proof of equivalence
+- **Test design drafts** — Enumerate normal, boundary, and failure paths based on requirements, then have the developer supplement business invariants, concurrency, and integration boundaries. AI-generated tests that merely restate the implementation have no regression value
+- **Error explanation and troubleshooting hypotheses** — Propose falsifiable hypotheses based on the complete error text, version, call stack, and environment, then verify through logs, minimal reproduction, or documentation — do not directly adopt the first fix suggestion
+- **Documentation and code understanding** — Generate call chains, module summaries, and change descriptions; conclusions must point back to source code, configuration, protocol, or runtime evidence
+- **Candidate implementation comparison** — Ask AI to explicitly list constraints, complexity, failure modes, and validation plans to help discover omissions, rather than replacing the architecture owner's decisions
+
+**Tasks that should not be left to AI autonomous decision-making or direct implementation:**
+
+- **Core business with unclear invariants** — Payment, inventory, permissions, billing, compliance, and auditing logic where error costs are high — humans must first define protocols, boundaries, and approval responsibilities
+- **Performance optimization without real data** — AI cannot prove production bottlenecks from code appearance; requires baseline, profile, load testing, and canary metrics
+- **Destructive data changes** — Schema deletions, bulk data fixes, and irreversible migrations must have backups, rehearsals, approvals, rollback, or forward-fix plans
+- **Security-sensitive implementations** — Authentication, authorization, key management, cryptography, and input trust boundaries must be reviewed against threat models and security standards
+- **APIs first used with fast-changing versions** — First check current official documentation, dependency versions, and runnable examples to avoid outdated or nonexistent parameters in model output
+
+**Follow-up questions:**
+
+1. Can the acceptance criteria for this task be automatically determined by compilation, tests, schema, static checks, or runtime metrics?
+2. If the AI output is wrong, what is the worst-case impact, and at which layer can it be prevented from reaching production?
+3. Does the context provided to the AI contain credentials, user data, or internal sensitive information, and how is it minimized and de-sensitized?
+4. Who owns the code generated by the tools, and can subsequent maintainers explain its boundaries and failure modes?
+
+### Evidence Boundaries for AI Code Review
+
+- **What can AI reliably assist with?** — With sufficient context, finding local null handling issues, obvious resource leaks, error propagation, duplicate logic, naming, missing tests, and common security patterns, and generating a list of issues to be verified
+- **What cannot AI prove from a diff alone?** — Cannot prove business rule correctness, absence of runtime races, guaranteed performance improvement, dependency API validity, database migration safety, or system meeting SLOs under failure
+- **What must the review input minimally include?** — Requirements and invariants, complete diff, related interfaces and callers, dependency versions, test results, static check results, and migration/timing notes involving data or concurrency
+- **How to grade review conclusions?** — Separate "issues directly provable from source code," "risks requiring runtime evidence to verify," and "issues based on missing context"; each finding should point to file, code location, failure scenario, and verification method
+- **Why can't AI suggestions be treated as approvals?** — The model may misread context, fabricate APIs, or provide superficially reasonable fixes. The final approver must understand the change and verify the evidence; AI cannot replace code ownership, human approval, and production responsibility
+
+**Evidence loop:**
+
+1. Prove the issue is real using a minimal reproduction, failing test, or static rule.
+2. After the fix, run the same verification and confirm the failure cause is gone rather than the test being bypassed.
+3. Run regression tests, type checks, builds, and diff checks for the affected scope.
+4. High-risk changes are validated through integration environments, canary metrics, and rollback conditions.
+
+**Common misconceptions:**
+
+- Letting AI only look at a single function but asking it to judge cross-service transaction and permission correctness
+- Writing "looks thread-safe" or "should be faster" as a proven conclusion
+- Accepting AI-proposed tests directly without them failing first or only verifying mock calls
+- Pasting `.env`, tokens, real user data, or sensitive fields from production logs to provide context
+
+### Validation Requirements in Database and API Design
+
+**Database changes:**
+
+- AI can generate SQL, indexes, and migration drafts, but they must be validated on a database matching the production version for syntax, execution plans, lock behavior, affected rows, disk growth, and replication latency
+- Index recommendations must be based on real queries, data distribution, and write load; they cannot be decided by column names or generic "leftmost matching" rules alone
+- Migrations follow compatible evolution: expand the schema first so old and new versions work simultaneously; shrink only after backfill and traffic cutover are complete. Deletions, renames, and type changes must have backup and recovery plans
+- AI-generated data-fix SQL should first run on a read-only snapshot or small sample to verify expected row counts and invariants; production execution requires transaction boundaries, rate limiting, audit trails, and human confirmation
+
+**API design:**
+
+- Validate paths, fields, types, status codes, and error models using OpenAPI, JSON Schema, IDL, or contract tests — do not accept "RESTful" conclusions based only on natural language descriptions
+- Check authentication, authorization, tenant isolation, input limits, pagination, idempotency, timeouts, and retries; AI-generated interfaces do not have these guarantees by default
+- During evolution, validate new fields, default values, unknown enums, field removal, and coexistence of old and new clients; generated code passes compatibility tests with real clients and servers
+- Third-party API calls must be verified against current official documentation, SDK versions, rate limits, error codes, and retry rules — do not treat signatures from the model's memory as fact
+
+**Follow-up questions:**
+
+1. How much do the AI-suggested indexes change rows scanned, p95/p99, and write cost on representative data?
+2. If a migration fails midway, what state are the old/new services and data in, and how do you recover?
+3. When a client times out and retries a write request, how do idempotency keys and business unique constraints cooperate?
+4. After contract tests pass, what database locks, network failures, and permission boundaries can only be validated through integration testing?
+
+**Common misconceptions:**
+
+- Because AI can generate executable SQL, assuming the SQL is safe for production
+- Only validating API normal responses without checking error codes, permissions, duplicate requests, and compatibility
+- Writing SDK method names given by the model directly into code without compiling and running against the current dependency version
+- Using AI-generated mock data to prove real index benefits without matching production cardinality and distribution
